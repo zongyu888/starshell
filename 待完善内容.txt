@@ -1,2 +1,0 @@
-cd "c:\Users\mouji\Desktop\AI版 finalshell\java-client"
-mvn clean package -DskipTests "-Djdk.home=F:\java26"

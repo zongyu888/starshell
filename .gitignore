@@ -71,3 +71,10 @@ mvnw.cmd
 *.pid
 *.seed
 *.pid.lock
+
+# === 临时笔记和文案文件 ===
+视频文案.txt
+待完善内容.txt
+*.txt.backup
+笔记/
+临时文件/
