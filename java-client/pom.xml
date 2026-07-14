@@ -390,7 +390,7 @@
                                         <argument>--add-opens</argument>
                                         <argument>--java-options</argument>
                                         <argument>java.desktop/sun.awt=ALL-UNNAMED</argument>
-                                    </argument>
+                                    </arguments>
                                 </configuration>
                             </execution>
                         </executions>
@@ -454,7 +454,7 @@
                                         <argument>--add-opens</argument>
                                         <argument>--java-options</argument>
                                         <argument>java.desktop/sun.awt=ALL-UNNAMED</argument>
-                                    </argument>
+                                    </arguments>
                                 </configuration>
                             </execution>
                         </executions>
@@ -518,7 +518,7 @@
                                         <argument>--add-opens</argument>
                                         <argument>--java-options</argument>
                                         <argument>java.desktop/sun.awt=ALL-UNNAMED</argument>
-                                    </argument>
+                                    </arguments>
                                 </configuration>
                             </execution>
                         </executions>
