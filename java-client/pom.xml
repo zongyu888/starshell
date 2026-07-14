@@ -1,0 +1,371 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>com.aifinalshell</groupId>
+    <artifactId>ai-finalshell</artifactId>
+    <version>1.0.0</version>
+    <packaging>jar</packaging>
+
+    <name>StarShell</name>
+    <description>StarShell - AI运维工具 </description>
+
+    <properties>
+        <maven.compiler.source>17</maven.compiler.source>
+        <maven.compiler.target>17</maven.compiler.target>
+        <maven.compiler.release>17</maven.compiler.release>
+        <javafx.version>17.0.2</javafx.version>
+        <jackson.version>2.15.2</jackson.version>
+        <h2.version>2.2.224</h2.version>
+        <jsch.version>0.1.55</jsch.version>
+        <netty.version>4.1.97.Final</netty.version>
+        <guava.version>32.1.2-jre</guava.version>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <!-- JDK路径：可通过 -Djdk.home=xxx 覆盖，默认使用 java.home -->
+        <jdk.home>${java.home}</jdk.home>
+    </properties>
+
+    <dependencies>
+        <!-- JavaFX (Windows classifiers for native libraries) -->
+        <dependency>
+            <groupId>org.openjfx</groupId>
+            <artifactId>javafx-controls</artifactId>
+            <version>${javafx.version}</version>
+            <classifier>win</classifier>
+        </dependency>
+        <dependency>
+            <groupId>org.openjfx</groupId>
+            <artifactId>javafx-fxml</artifactId>
+            <version>${javafx.version}</version>
+            <classifier>win</classifier>
+        </dependency>
+        <dependency>
+            <groupId>org.openjfx</groupId>
+            <artifactId>javafx-graphics</artifactId>
+            <version>${javafx.version}</version>
+            <classifier>win</classifier>
+        </dependency>
+        <dependency>
+            <groupId>org.openjfx</groupId>
+            <artifactId>javafx-swing</artifactId>
+            <version>${javafx.version}</version>
+            <classifier>win</classifier>
+        </dependency>
+
+        <!-- SSH/SFTP -->
+        <dependency>
+            <groupId>com.jcraft</groupId>
+            <artifactId>jsch</artifactId>
+            <version>${jsch.version}</version>
+        </dependency>
+
+        <!-- Netty (used by WebSocket transport) -->
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-all</artifactId>
+            <version>${netty.version}</version>
+        </dependency>
+
+        <!-- H2 Database -->
+        <dependency>
+            <groupId>com.h2database</groupId>
+            <artifactId>h2</artifactId>
+            <version>${h2.version}</version>
+        </dependency>
+
+        <!-- Jackson JSON -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+            <version>${jackson.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.datatype</groupId>
+            <artifactId>jackson-datatype-jsr310</artifactId>
+            <version>${jackson.version}</version>
+        </dependency>
+
+        <!-- Guava -->
+        <dependency>
+            <groupId>com.google.guava</groupId>
+            <artifactId>guava</artifactId>
+            <version>${guava.version}</version>
+        </dependency>
+
+        <!-- WebSocket -->
+        <dependency>
+            <groupId>org.java-websocket</groupId>
+            <artifactId>Java-WebSocket</artifactId>
+            <version>1.5.4</version>
+        </dependency>
+
+        <!-- Logback -->
+        <dependency>
+            <groupId>ch.qos.logback</groupId>
+            <artifactId>logback-classic</artifactId>
+            <version>1.4.8</version>
+        </dependency>
+
+        <!-- JUnit 5（测试用，test 作用域，不进入 jlink/jpackage 打包产物） -->
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <version>5.10.0</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <!-- 编译器插件 -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.11.0</version>
+                <configuration>
+                    <source>17</source>
+                    <target>17</target>
+                    <release>17</release>
+                </configuration>
+            </plugin>
+
+            <!-- Surefire：运行 JUnit 5 测试（打包用 -DskipTests 跳过，不影响 jlink/jpackage） -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>3.2.5</version>
+                <configuration>
+                    <includes>
+                        <include>**/*Test.java</include>
+                    </includes>
+                </configuration>
+            </plugin>
+
+            <!-- JavaFX运行插件 -->
+            <plugin>
+                <groupId>org.openjfx</groupId>
+                <artifactId>javafx-maven-plugin</artifactId>
+                <version>0.0.8</version>
+                <configuration>
+                    <mainClass>com.aifinalshell.AiFinalShellApp</mainClass>
+                </configuration>
+            </plugin>
+
+            <!-- JAR打包插件 -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <version>3.3.0</version>
+                <configuration>
+                    <archive>
+                        <manifest>
+                            <mainClass>com.aifinalshell.Launcher</mainClass>
+                        </manifest>
+                    </archive>
+                </configuration>
+            </plugin>
+
+            <!-- Maven依赖打包插件(生成fat-jar) -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-shade-plugin</artifactId>
+                <version>3.5.0</version>
+                <executions>
+                    <execution>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>shade</goal>
+                        </goals>
+                        <configuration>
+                            <transformers>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                                    <mainClass>com.aifinalshell.Launcher</mainClass>
+                                </transformer>
+                            </transformers>
+                            <filters>
+                                <filter>
+                                    <artifact>*:*</artifact>
+                                    <excludes>
+                                        <exclude>META-INF/*.SF</exclude>
+                                        <exclude>META-INF/*.DSA</exclude>
+                                        <exclude>META-INF/*.RSA</exclude>
+                                        <exclude>module-info.class</exclude>
+                                    </excludes>
+                                </filter>
+                            </filters>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!--
+                antrun: package 阶段将 fat-jar 单独暂存到 target/jpackage-input，
+                供 jpackage 的 input 参数使用。避免把 target/ 全部产物（含精简 JRE runtime/、
+                classes/ 等）一并打包进 app-image 的 app/ 目录，消除约 80MB 冗余。
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-antrun-plugin</artifactId>
+                <version>3.1.0</version>
+                <executions>
+                    <execution>
+                        <id>stage-jpackage-input</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>run</goal>
+                        </goals>
+                        <configuration>
+                            <target>
+                                <delete dir="${project.basedir}/target/jpackage-input" quiet="true"/>
+                                <mkdir dir="${project.basedir}/target/jpackage-input"/>
+                                <copy file="${project.basedir}/target/${project.build.finalName}.jar"
+                                      todir="${project.basedir}/target/jpackage-input"/>
+                            </target>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!--
+                jlink: 创建自定义精简JRE (像FinalShell那样内置JRE，用户无需安装JDK)
+                生成的JRE在 target/runtime 目录
+                注意：项目是非模块化的，jlink只生成JDK模块精简JRE，应用通过fat-jar+精简JRE运行。
+                D 修复：原 maven-jlink-plugin 会把项目依赖(Netty等)加入 module-path 选项，
+                其 split-package(io.netty.handler.ssl.ocsp)导致 jlink 报错。改为 exec 直接调用
+                jlink，module-path 仅指向 ${jdk.home}/jmods，完全不引入项目依赖，符合
+                非模块化项目只需 JDK 精简 JRE 的设计意图。JavaFX/Netty 等由 fat-jar 提供。
+            -->
+
+            <!--
+                jpackage: 使用exec-maven-plugin直接调用jpackage命令生成自包含安装包
+                (org.apache.maven.plugins:maven-jpackage-plugin不存在于Maven Central)
+                运行: mvn package -DskipTests (自动执行jlink + jpackage)
+                需要: jdk.home 指向包含jpackage工具的JDK 17+
+            -->
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <version>3.1.0</version>
+                <executions>
+                    <!-- D: jlink 直接调用，module-path 仅 JDK jmods，不引入项目依赖 -->
+                    <execution>
+                        <id>jlink</id>
+                        <phase>prepare-package</phase>
+                        <goals>
+                            <goal>exec</goal>
+                        </goals>
+                        <configuration>
+                            <executable>${jdk.home}/bin/jlink</executable>
+                            <arguments>
+                                <argument>--module-path=${jdk.home}/jmods</argument>
+                                <argument>--add-modules</argument>
+                                <argument>java.base,java.desktop,java.sql,java.net.http,java.logging,java.management,java.naming,java.security.jgss,java.transaction.xa,java.xml,java.scripting,jdk.crypto.cryptoki,jdk.crypto.ec,jdk.unsupported</argument>
+                                <argument>--output</argument>
+                                <argument>${project.basedir}/target/runtime</argument>
+                                <argument>--compress</argument>
+                                <argument>2</argument>
+                                <argument>--no-header-files</argument>
+                                <argument>--no-man-pages</argument>
+                                <argument>--ignore-signing-information</argument>
+                            </arguments>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>jpackage</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>exec</goal>
+                        </goals>
+                        <configuration>
+                            <executable>${jdk.home}/bin/jpackage</executable>
+                            <arguments>
+                                <argument>--type</argument>
+                                <argument>app-image</argument>
+                                <argument>--name</argument>
+                                <argument>StarShell</argument>
+                                <argument>--vendor</argument>
+                                <argument>StarShell</argument>
+                                <argument>--description</argument>
+                                <argument>StarShell</argument>
+                                <argument>--app-version</argument>
+                                <argument>1.0.0</argument>
+                                <argument>--input</argument>
+                                <argument>${project.basedir}/target/jpackage-input</argument>
+                                <argument>--main-jar</argument>
+                                <argument>${project.build.finalName}.jar</argument>
+                                <argument>--main-class</argument>
+                                <argument>com.aifinalshell.Launcher</argument>
+                                <!-- 使用jlink生成的精简JRE (核心：让用户不需要安装JDK) -->
+                                <argument>--runtime-image</argument>
+                                <argument>${project.basedir}/target/runtime</argument>
+                                <!-- 输出目录 -->
+                                <argument>--dest</argument>
+                                <argument>${project.basedir}/target/installer</argument>
+                                <!-- 图标 -->
+                                <argument>--icon</argument>
+                                <argument>${project.basedir}/src/main/resources/images/icon.ico</argument>
+                                <!-- app-image 类型不支持 Windows 安装包专用选项；完整 exe 安装包需安装 WiX Toolset -->
+                                <!-- JVM选项 -->
+                                <argument>--java-options</argument>
+                                <argument>-Xms256m</argument>
+                                <argument>--java-options</argument>
+                                <argument>-Xmx512m</argument>
+                                <argument>--java-options</argument>
+                                <argument>--add-opens</argument>
+                                <argument>--java-options</argument>
+                                <argument>java.base/java.lang=ALL-UNNAMED</argument>
+                                <argument>--java-options</argument>
+                                <argument>--add-opens</argument>
+                                <argument>--java-options</argument>
+                                <argument>java.desktop/sun.awt=ALL-UNNAMED</argument>
+                            </arguments>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+
+    <!--
+        开发配置 (不使用jlink/jpackage，只生成fat-jar)
+        开发时运行: mvn package -DskipTests -Pdev
+        打包时运行: mvn package -DskipTests -Djdk.home="C:\Program Files\Java\latest\jdk-26"
+    -->
+    <profiles>
+        <profile>
+            <id>dev</id>
+            <build>
+                <plugins>
+                    <!-- 禁用jlink与jpackage（dev只生成fat-jar） -->
+                    <plugin>
+                        <groupId>org.codehaus.mojo</groupId>
+                        <artifactId>exec-maven-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>jlink</id>
+                                <phase>none</phase>
+                            </execution>
+                            <execution>
+                                <id>jpackage</id>
+                                <phase>none</phase>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <!-- 禁用antrun暂存（dev只生成fat-jar，无需jpackage-input暂存） -->
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-antrun-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>stage-jpackage-input</id>
+                                <phase>none</phase>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
+</project>

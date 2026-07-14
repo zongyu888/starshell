@@ -1,0 +1,73 @@
+# ============================================
+# StarShell 项目 .gitignore 文件
+# ============================================
+
+# === 构建产物 ===
+target/
+build/
+out/
+*.class
+*.jar
+*.war
+*.ear
+
+# === 安装包 ===
+*.exe
+*.msi
+*.dmg
+*.deb
+*.rpm
+installer-output/
+
+# === 日志文件 ===
+logs/
+*.log
+
+# === 数据库文件 ===
+data/
+*.db
+*.mv.db
+*.lock.db
+*.h2.db
+
+# === IDE 文件 ===
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+.settings/
+.classpath
+.project
+.factorypath
+
+# === 操作系统文件 ===
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# === 敏感配置文件 ===
+config.properties
+config.json
+*.pem
+*.key
+*.p12
+*.jks
+
+# === Trae/编辑器临时文件 ===
+.trae/
+*.tmp
+*.bak
+*.swp
+*~
+
+# === 依赖缓存 ===
+dependency-reduced-pom.xml
+.mvn/
+mvnw
+mvnw.cmd
+
+# === 运行时文件 ===
+*.pid
+*.seed
+*.pid.lock

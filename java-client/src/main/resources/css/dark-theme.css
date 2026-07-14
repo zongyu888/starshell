@@ -1,0 +1,1585 @@
+/* StarShell - 深色主题 */
+
+.root {
+    -fx-base: #1e1e1e;
+    -fx-background: #1e1e1e;
+    -fx-control-inner-background: #2d2d2d;
+    -fx-control-inner-background-alt: derive(-fx-control-inner-background, -5%);
+    -fx-accent: #007acc;
+    -fx-focus-color: #007acc;
+    -fx-faint-focus-color: rgba(0,122,204,0.2);
+    -fx-font-family: "Microsoft YaHei", "Segoe UI", sans-serif;
+    -fx-font-size: 13px;
+    -fx-text-fill: #d4d4d4;
+}
+
+/* 工具栏按钮 */
+.toolbar-btn {
+    -fx-background-color: #3c3c3c;
+    -fx-text-fill: #d4d4d4;
+    -fx-background-radius: 4;
+    -fx-padding: 6 12;
+    -fx-cursor: hand;
+}
+.toolbar-btn:hover {
+    -fx-background-color: #505050;
+}
+.toolbar-btn:pressed {
+    -fx-background-color: #007acc;
+}
+
+.toolbar-btn-ai {
+    -fx-background-color: #0e639c;
+    -fx-text-fill: white;
+    -fx-background-radius: 4;
+    -fx-padding: 6 12;
+    -fx-cursor: hand;
+}
+.toolbar-btn-ai:hover {
+    -fx-background-color: #1177bb;
+}
+
+/* 侧边栏按钮 */
+.side-button {
+    -fx-background-color: #3c3c3c;
+    -fx-text-fill: #d4d4d4;
+    -fx-background-radius: 4;
+    -fx-padding: 8;
+    -fx-cursor: hand;
+}
+.side-button:hover {
+    -fx-background-color: #505050;
+}
+
+/* 终端工具按钮 */
+.terminal-tool-btn {
+    -fx-background-color: transparent;
+    -fx-text-fill: #888;
+    -fx-padding: 4 8;
+    -fx-cursor: hand;
+}
+.terminal-tool-btn:hover {
+    -fx-background-color: #3c3c3c;
+    -fx-text-fill: #d4d4d4;
+}
+
+/* SFTP按钮 */
+.sftp-btn {
+    -fx-background-color: #3c3c3c;
+    -fx-text-fill: #d4d4d4;
+    -fx-background-radius: 3;
+    -fx-padding: 4 8;
+    -fx-cursor: hand;
+}
+.sftp-btn:hover {
+    -fx-background-color: #505050;
+}
+
+/* AI快捷按钮 */
+.ai-quick-btn {
+    -fx-background-color: #2d2d2d;
+    -fx-text-fill: #888;
+    -fx-background-radius: 3;
+    -fx-padding: 4 8;
+    -fx-font-size: 11px;
+    -fx-cursor: hand;
+}
+.ai-quick-btn:hover {
+    -fx-background-color: #3c3c3c;
+    -fx-text-fill: #d4d4d4;
+}
+
+/* ========== Breadcrumb Path Bar ========== */
+.breadcrumb-btn {
+    -fx-background-color: #0e639c;
+    -fx-text-fill: white;
+    -fx-background-radius: 3;
+    -fx-padding: 2 8;
+    -fx-cursor: hand;
+    -fx-font-size: 12px;
+}
+.breadcrumb-btn:hover {
+    -fx-background-color: #1177bb;
+}
+
+/* ========== Terminal Output ========== */
+.terminal-output {
+    -fx-control-inner-background: #0c0c0c;
+    -fx-text-fill: #e6e6e6;
+    -fx-font-family: 'Cascadia Code', 'Consolas', 'Courier New', 'Microsoft YaHei', monospace;
+    -fx-font-size: 13px;
+    -fx-border-color: transparent;
+    -fx-padding: 8 10;
+    -fx-background-insets: 0;
+    -fx-line-spacing: 2;
+    -fx-background-radius: 0;
+}
+.terminal-output .content {
+    -fx-background-color: #0c0c0c;
+    -fx-padding: 2 2;
+}
+.terminal-output:focused {
+    -fx-border-color: transparent;
+}
+
+/* ========== Monitor Progress Bars Enhanced ========== */
+.monitor-progress {
+    -fx-pref-height: 12px;
+    -fx-background-radius: 6;
+    -fx-border-radius: 6;
+}
+.monitor-progress .bar {
+    -fx-background-radius: 6;
+    -fx-background-insets: 0;
+    -fx-background-color: #0dbc79;
+}
+.monitor-progress .track {
+    -fx-background-color: #3c3c3c;
+    -fx-background-radius: 6;
+}
+
+/* AI标签按钮 */
+.ai-tab-btn {
+    -fx-background-color: #2d2d2d;
+    -fx-text-fill: #888;
+    -fx-background-radius: 4;
+    -fx-padding: 6 12;
+    -fx-cursor: hand;
+}
+.ai-tab-btn:hover {
+    -fx-background-color: #3c3c3c;
+}
+.ai-tab-btn:selected, .ai-tab-btn:focused {
+    -fx-background-color: #0e639c;
+    -fx-text-fill: white;
+}
+
+/* 小按钮 */
+.small-btn {
+    -fx-background-color: #3c3c3c;
+    -fx-text-fill: #888;
+    -fx-background-radius: 3;
+    -fx-padding: 3 8;
+    -fx-font-size: 11px;
+    -fx-cursor: hand;
+}
+.small-btn:hover {
+    -fx-background-color: #505050;
+    -fx-text-fill: #d4d4d4;
+}
+
+/* 操作按钮 */
+.action-btn {
+    -fx-background-color: #3c3c3c;
+    -fx-text-fill: #d4d4d4;
+    -fx-background-radius: 3;
+    -fx-padding: 6 12;
+}
+
+/* 标签页 */
+.tab-pane .tab-header-area .tab-header-background {
+    -fx-background-color: #252526;
+}
+.tab-pane .tab {
+    -fx-background-color: #2d2d2d;
+    -fx-border-color: transparent;
+    -fx-background-radius: 5 5 0 0;
+    -fx-padding: 8 16;
+}
+.tab-pane .tab:selected {
+    -fx-background-color: #1e1e1e;
+    -fx-border-color: #007acc #007acc transparent #007acc;
+}
+.tab-pane .tab .tab-label {
+    -fx-text-fill: #888;
+    -fx-font-size: 12px;
+}
+.tab-pane .tab:selected .tab-label {
+    -fx-text-fill: #d4d4d4;
+}
+
+/* 树视图 */
+.tree-view {
+    -fx-background-color: #252526;
+    -fx-control-inner-background: #252526;
+}
+.tree-cell {
+    -fx-background-color: transparent;
+    -fx-text-fill: #d4d4d4;
+    -fx-padding: 3 5;
+    -fx-font-size: 12px;
+}
+.tree-cell:selected {
+    -fx-background-color: #094771;
+}
+.tree-cell:hover {
+    -fx-background-color: #2a2d2e;
+}
+.tree-cell .tree-disclosure-arrow {
+    -fx-padding: 0 3 0 0;
+}
+.tree-cell .tree-disclosure-arrow .arrow {
+    -fx-background-color: #888;
+    -fx-background-radius: 2;
+}
+.tree-cell:selected .tree-disclosure-arrow .arrow {
+    -fx-background-color: #fff;
+}
+.tree-cell:expanded > .tree-disclosure-arrow > .arrow {
+    -fx-background-color: #0dbc79;
+}
+
+/* 表格 */
+.table-view {
+    -fx-background-color: #1e1e1e;
+    -fx-control-inner-background: #1e1e1e;
+}
+.table-view .column-header {
+    -fx-background-color: #2d2d2d;
+}
+.table-view .column-header .label {
+    -fx-text-fill: #888;
+    -fx-font-weight: normal;
+}
+.table-row-cell {
+    -fx-background-color: #1e1e1e;
+    -fx-border-color: transparent;
+}
+.table-row-cell:selected {
+    -fx-background-color: #094771;
+}
+.table-row-cell:odd {
+    -fx-background-color: #252526;
+}
+.table-row-cell:selected:odd {
+    -fx-background-color: #094771;
+}
+.table-cell {
+    -fx-text-fill: #d4d4d4;
+}
+
+/* 输入框 */
+.text-field, .password-field {
+    -fx-background-color: #3c3c3c;
+    -fx-text-fill: #d4d4d4;
+    -fx-prompt-text-fill: #666;
+    -fx-border-color: #555;
+    -fx-border-radius: 3;
+    -fx-background-radius: 3;
+    -fx-padding: 6 10;
+}
+.text-field:focused, .password-field:focused {
+    -fx-border-color: #007acc;
+}
+
+/* 文本区域 */
+.text-area {
+    -fx-background-color: #1e1e1e;
+    -fx-text-fill: #d4d4d4;
+    -fx-border-color: #3c3c3c;
+}
+.text-area .content {
+    -fx-background-color: #1e1e1e;
+}
+.text-area:focused {
+    -fx-border-color: #007acc;
+}
+
+/* 进度条 */
+.progress-bar {
+    -fx-accent: #0e639c;
+    -fx-background-radius: 3;
+}
+.progress-bar .bar {
+    -fx-background-radius: 3;
+    -fx-background-insets: 0;
+}
+
+/* 下拉框 */
+.combo-box {
+    -fx-background-color: #3c3c3c;
+    -fx-border-color: #555;
+    -fx-border-radius: 3;
+    -fx-background-radius: 3;
+}
+.combo-box .list-cell {
+    -fx-text-fill: #d4d4d4;
+}
+.combo-box-popup .list-view {
+    -fx-background-color: #2d2d2d;
+}
+.combo-box-popup .list-cell {
+    -fx-background-color: #2d2d2d;
+    -fx-text-fill: #d4d4d4;
+}
+.combo-box-popup .list-cell:hover {
+    -fx-background-color: #094771;
+}
+
+/* 滚动条 */
+.scroll-bar {
+    -fx-background-color: transparent;
+}
+.scroll-bar .thumb {
+    -fx-background-color: #424242;
+    -fx-background-radius: 3;
+    -fx-pref-width: 8;
+    -fx-pref-height: 8;
+}
+.scroll-bar .thumb:hover {
+    -fx-background-color: #555;
+}
+.scroll-bar .increment-button, .scroll-bar .decrement-button {
+    -fx-background-color: transparent;
+    -fx-padding: 0;
+}
+.scroll-bar .increment-arrow, .scroll-bar .decrement-arrow {
+    -fx-shape: "";
+    -fx-padding: 0;
+}
+.scroll-bar .track {
+    -fx-background-color: transparent;
+}
+
+/* 对话框 */
+.dialog-pane {
+    -fx-background-color: #2d2d2d;
+}
+.dialog-pane .header-panel {
+    -fx-background-color: #252526;
+}
+.dialog-pane .content {
+    -fx-text-fill: #d4d4d4;
+}
+
+/* 列表 */
+.list-view {
+    -fx-background-color: #1e1e1e;
+    -fx-control-inner-background: #1e1e1e;
+}
+.list-cell {
+    -fx-background-color: #1e1e1e;
+    -fx-text-fill: #d4d4d4;
+    -fx-padding: 6 10;
+}
+.list-cell:selected {
+    -fx-background-color: #094771;
+}
+.list-cell:odd {
+    -fx-background-color: #252526;
+}
+
+/* 复选框 */
+.check-box {
+    -fx-text-fill: #d4d4d4;
+}
+.check-box .box {
+    -fx-background-color: #3c3c3c;
+    -fx-border-color: #555;
+}
+
+/* 分割面板 */
+.split-pane {
+    -fx-background-color: #1e1e1e;
+}
+.split-pane .divider {
+    -fx-background-color: #3c3c3c;
+}
+
+/* 图表 */
+.chart {
+    -fx-background-color: transparent;
+}
+.chart-plot-background {
+    -fx-background-color: #1e1e1e;
+}
+.chart-legend {
+    -fx-background-color: transparent;
+}
+.chart-legend-item {
+    -fx-text-fill: #d4d4d4;
+}
+
+/* 圆形指示器 */
+.circle {
+    -fx-effect: dropshadow(three-pass-box, rgba(0,0,0,0.3), 3, 0, 0, 1);
+}
+
+/* 菜单栏 */
+.menu-bar {
+    -fx-background-color: #2d2d2d;
+}
+.menu-bar .label {
+    -fx-text-fill: #d4d4d4;
+}
+.menu-item {
+    -fx-background-color: #2d2d2d;
+}
+.menu-item .label {
+    -fx-text-fill: #d4d4d4;
+}
+.menu-item:hover {
+    -fx-background-color: #094771;
+}
+.menu-item:focused {
+    -fx-background-color: #094771;
+}
+.context-menu {
+    -fx-background-color: #2d2d2d;
+    -fx-border-color: #3c3c3c;
+}
+
+/* 工具栏 */
+.tool-bar {
+    -fx-background-color: #2d2d2d;
+    -fx-border-color: #3c3c3c;
+}
+
+/* ========== Tab Enhancements ========== */
+.tab-pane .tab {
+    -fx-padding: 6 12;
+}
+.tab-pane .tab:selected {
+    -fx-background-color: #1e1e1e;
+    -fx-border-color: #007acc #007acc transparent #007acc;
+}
+
+/* ========== File Table Enhancements ========== */
+.table-view .filler {
+    -fx-background-color: #2d2d2d;
+}
+.table-view .column-header-background {
+    -fx-background-color: #252526;
+}
+.table-view .column-header {
+    -fx-background-color: #252526;
+    -fx-border-color: #3c3c3c;
+}
+
+/* ========== Context Menu Enhancements ========== */
+.context-menu .menu-item {
+    -fx-padding: 5 30 5 10;
+}
+.context-menu .menu-item .label {
+    -fx-text-fill: #d4d4d4;
+}
+.context-menu .menu-item:focused {
+    -fx-background-color: #094771;
+}
+.context-menu .separator {
+    -fx-padding: 3 0;
+}
+
+/* ========== AI Quick Buttons ========== */
+.ai-quick-btn {
+    -fx-background-color: #2d2d2d;
+    -fx-text-fill: #888;
+    -fx-background-radius: 3;
+    -fx-padding: 4 8;
+    -fx-font-size: 11px;
+    -fx-cursor: hand;
+}
+.ai-quick-btn:hover {
+    -fx-background-color: #3c3c3c;
+    -fx-text-fill: #d4d4d4;
+}
+
+/* ========== Breadcrumb Path Bar ========== */
+.breadcrumb-btn {
+    -fx-background-color: #0e639c;
+    -fx-text-fill: white;
+    -fx-background-radius: 3;
+    -fx-padding: 2 8;
+    -fx-cursor: hand;
+    -fx-font-size: 12px;
+}
+.breadcrumb-btn:hover {
+    -fx-background-color: #1177bb;
+}
+
+/* ========== Monitor Progress Bars ========== */
+.monitor-progress {
+    -fx-pref-height: 10px;
+    -fx-background-radius: 5;
+    -fx-border-radius: 5;
+}
+.monitor-progress .bar {
+    -fx-background-radius: 5;
+    -fx-background-insets: 0;
+    -fx-background-color: #0dbc79;
+}
+.monitor-progress .track {
+    -fx-background-color: #3c3c3c;
+    -fx-background-radius: 5;
+}
+
+/* ========== Left Panel Section Headers ========== */
+.section-header {
+    -fx-padding: 6 10;
+    -fx-background-color: #2d2d2d;
+    -fx-cursor: hand;
+}
+.section-header:hover {
+    -fx-background-color: #383838;
+}
+
+/* ========== Top Process Text ========== */
+.top-process-text {
+    -fx-control-inner-background: #1e1e1e;
+    -fx-text-fill: #d4d4d4;
+    -fx-font-family: 'Consolas', monospace;
+    -fx-font-size: 9px;
+    -fx-border-color: #3c3c3c;
+    -fx-background-color: #1e1e1e;
+}
+
+/* ========== Session Bar ========== */
+.session-bar-btn {
+    -fx-background-color: #3c3c3c;
+    -fx-text-fill: #888;
+    -fx-background-radius: 3;
+    -fx-padding: 2 8;
+    -fx-font-size: 11px;
+    -fx-cursor: hand;
+}
+.session-bar-btn:hover {
+    -fx-background-color: #505050;
+    -fx-text-fill: #d4d4d4;
+}
+.session-bar-btn-active {
+    -fx-background-color: #007acc;
+    -fx-text-fill: white;
+    -fx-background-radius: 3;
+    -fx-padding: 2 8;
+    -fx-font-size: 11px;
+    -fx-cursor: hand;
+}
+
+/* ========== Session Tabs (VS Code 风格) ========== */
+.session-tab {
+    -fx-background-color: transparent;
+    -fx-border-color: transparent;
+    -fx-background-radius: 0;
+    -fx-padding: 6 12;
+    -fx-cursor: hand;
+    -fx-border-width: 0 0 2 0;
+}
+.session-tab:hover {
+    -fx-background-color: #2a2a2a;
+}
+.session-tab:active {
+    -fx-background-color: #1e1e1e;
+    -fx-border-color: transparent transparent #007acc transparent;
+    -fx-border-width: 0 0 2 0;
+}
+.session-tab-label {
+    -fx-text-fill: #888;
+    -fx-font-size: 11px;
+}
+.session-tab:active .session-tab-label {
+    -fx-text-fill: #e6e6e6;
+}
+.session-tab-close {
+    -fx-background-color: transparent;
+    -fx-text-fill: #666;
+    -fx-font-size: 10px;
+    -fx-padding: 0 4;
+    -fx-cursor: hand;
+}
+.session-tab-close:hover {
+    -fx-text-fill: #f85149;
+    -fx-background-color: rgba(248, 81, 73, 0.15);
+    -fx-background-radius: 3;
+}
+.session-add-btn {
+    -fx-background-color: transparent;
+    -fx-text-fill: #888;
+    -fx-padding: 6 10;
+    -fx-font-size: 14px;
+    -fx-font-weight: bold;
+    -fx-cursor: hand;
+}
+.session-add-btn:hover {
+    -fx-background-color: #2a2a2a;
+    -fx-text-fill: #e6e6e6;
+    -fx-background-radius: 3;
+}
+
+/* 面包屑 ">" 分隔符 */
+.breadcrumb-sep {
+    -fx-text-fill: #666;
+    -fx-font-size: 12px;
+}
+
+/* sessionBar 横向滚动容器（防溢出） */
+.session-bar-scroll {
+    -fx-background: #252526;
+    -fx-background-color: #252526;
+    -fx-border-color: transparent;
+    -fx-padding: 0;
+}
+.session-bar-scroll > .viewport {
+    -fx-background-color: #252526;
+}
+.session-bar-scroll .scroll-bar:horizontal {
+    -fx-background-color: transparent;
+    -fx-opacity: 0.6;
+}
+.session-bar-scroll .scroll-bar:horizontal .thumb {
+    -fx-background-color: #3c3c3c;
+    -fx-background-radius: 3;
+}
+
+/* ========== ScrollPane transparent ========== */
+.scroll-pane {
+    -fx-background-color: transparent;
+    -fx-background: transparent;
+}
+.scroll-pane > .viewport {
+    -fx-background-color: transparent;
+}
+.scroll-pane .corner {
+    -fx-background-color: transparent;
+}
+
+/* ========== Drag Drop Highlight ========== */
+.file-table-drag-over {
+    -fx-border-color: #007acc;
+    -fx-border-width: 2;
+    -fx-border-style: dashed;
+    -fx-background-color: rgba(0, 122, 204, 0.1);
+}
+
+/* ========== Server Status ========== */
+.server-connected {
+    -fx-text-fill: #0dbc79;
+}
+.server-disconnected {
+    -fx-text-fill: #666666;
+}
+
+/* ========== SplitPane Divider ========== */
+.split-pane > .split-pane-divider {
+    -fx-background-color: #3c3c3c;
+    -fx-padding: 2;
+}
+.split-pane > .split-pane-divider:hover {
+    -fx-background-color: #007acc;
+}
+
+/* ========== Markdown / AI Chat Rendering ========== */
+
+/* Code block container */
+.ai-code-block {
+    -fx-background-color: #1e1e1e;
+    -fx-border-color: #3c3c3c;
+    -fx-border-width: 1;
+    -fx-border-radius: 4;
+    -fx-background-radius: 4;
+    -fx-padding: 10;
+    -fx-font-family: "Cascadia Code", "Consolas", "Courier New", monospace;
+    -fx-font-size: 12px;
+}
+
+/* Shell command code block */
+.ai-shell-block {
+    -fx-background-color: #0d1117;
+    -fx-border-color: #30363d;
+    -fx-border-width: 1;
+    -fx-border-radius: 6;
+    -fx-background-radius: 6;
+    -fx-padding: 12;
+    -fx-font-family: "Cascadia Code", "Consolas", monospace;
+    -fx-font-size: 12px;
+    -fx-text-fill: #e6edf3;
+}
+
+/* Code block header bar */
+.ai-code-header {
+    -fx-background-color: #161b22;
+    -fx-border-color: #30363d;
+    -fx-border-width: 0 0 1 0;
+    -fx-padding: 4 10;
+    -fx-text-fill: #8b949e;
+    -fx-font-size: 11px;
+}
+
+/* Copy button in code blocks */
+.ai-copy-btn {
+    -fx-background-color: #21262d;
+    -fx-text-fill: #8b949e;
+    -fx-border-color: #30363d;
+    -fx-border-width: 1;
+    -fx-border-radius: 4;
+    -fx-background-radius: 4;
+    -fx-padding: 2 8;
+    -fx-font-size: 11px;
+    -fx-cursor: hand;
+}
+.ai-copy-btn:hover {
+    -fx-background-color: #30363d;
+    -fx-text-fill: #e6edf3;
+}
+
+/* Error message highlighting */
+.ai-error-text {
+    -fx-text-fill: #f85149;
+    -fx-font-family: "Cascadia Code", "Consolas", monospace;
+}
+
+/* Warning message highlighting */
+.ai-warning-text {
+    -fx-text-fill: #d29922;
+}
+
+/* Success message highlighting */
+.ai-success-text {
+    -fx-text-fill: #3fb950;
+}
+
+/* Critical alert highlighting */
+.ai-critical-text {
+    -fx-text-fill: #f85149;
+    -fx-font-weight: bold;
+    -fx-background-color: rgba(248, 81, 73, 0.1);
+    -fx-padding: 4 8;
+    -fx-border-color: #f85149;
+    -fx-border-width: 1;
+    -fx-border-radius: 4;
+}
+
+/* Severity badge */
+.ai-severity-badge {
+    -fx-padding: 2 8;
+    -fx-border-radius: 10;
+    -fx-background-radius: 10;
+    -fx-font-size: 11px;
+    -fx-font-weight: bold;
+}
+.ai-severity-critical {
+    -fx-background-color: #f85149;
+    -fx-text-fill: white;
+}
+.ai-severity-warning {
+    -fx-background-color: #d29922;
+    -fx-text-fill: #0d1117;
+}
+.ai-severity-info {
+    -fx-background-color: #388bfd;
+    -fx-text-fill: white;
+}
+
+/* AI message bubble */
+.ai-message-user {
+    -fx-background-color: #1f6feb;
+    -fx-text-fill: white;
+    -fx-background-radius: 12;
+    -fx-padding: 10 14;
+    -fx-wrap-text: true;
+}
+.ai-message-assistant {
+    -fx-background-color: #2d2d2d;
+    -fx-text-fill: #d4d4d4;
+    -fx-background-radius: 12;
+    -fx-padding: 10 14;
+    -fx-wrap-text: true;
+}
+
+/* Model selector in AI panel */
+.ai-model-selector {
+    -fx-background-color: #3c3c3c;
+    -fx-border-color: #555;
+    -fx-border-width: 1;
+    -fx-border-radius: 4;
+    -fx-background-radius: 4;
+    -fx-padding: 4 8;
+}
+
+/* Free model indicator */
+.ai-free-badge {
+    -fx-background-color: #238636;
+    -fx-text-fill: white;
+    -fx-padding: 1 6;
+    -fx-border-radius: 8;
+    -fx-background-radius: 8;
+    -fx-font-size: 10px;
+    -fx-font-weight: bold;
+}
+
+/* Streaming indicator (typing dots) */
+.ai-typing-indicator {
+    -fx-text-fill: #8b949e;
+    -fx-font-style: italic;
+}
+
+/* ========== TRAE Style AI Panel ========== */
+
+/* Top bar buttons */
+.ai-top-btn {
+    -fx-background-color: transparent;
+    -fx-text-fill: #888;
+    -fx-font-size: 13px;
+    -fx-padding: 4 8;
+    -fx-cursor: hand;
+}
+.ai-top-btn:hover {
+    -fx-background-color: #333;
+    -fx-text-fill: #e5e5e5;
+}
+
+/* Tool buttons in input area */
+.ai-tool-btn {
+    -fx-background-color: transparent;
+    -fx-text-fill: #888;
+    -fx-font-size: 16px;
+    -fx-padding: 4 10;
+    -fx-cursor: hand;
+}
+.ai-tool-btn:hover {
+    -fx-background-color: #333;
+    -fx-text-fill: #e5e5e5;
+}
+
+/* AI 面板下拉框（模型筛选/选择） */
+.ai-combo {
+    -fx-background-color: #2d2d2d;
+    -fx-border-color: #3c3c3c;
+    -fx-border-radius: 4;
+    -fx-background-radius: 4;
+    -fx-prompt-text-fill: #666;
+}
+.ai-combo .list-cell {
+    -fx-text-fill: #d4d4d4;
+}
+.ai-combo .arrow-button {
+    -fx-background-color: transparent;
+}
+.ai-combo .arrow {
+    -fx-background-color: #888;
+}
+
+/* AI 面板文本工具按钮（模型配置/上传） */
+.ai-tool-btn-text {
+    -fx-background-color: #2d2d2d;
+    -fx-text-fill: #d4d4d4;
+    -fx-font-size: 11px;
+    -fx-padding: 5 12;
+    -fx-background-radius: 4;
+    -fx-border-color: #3c3c3c;
+    -fx-border-width: 1;
+    -fx-border-radius: 4;
+    -fx-cursor: hand;
+}
+.ai-tool-btn-text:hover {
+    -fx-background-color: #3c3c3c;
+    -fx-text-fill: #ffffff;
+}
+
+/* AI 输入框外层容器：细边框、圆角 */
+.ai-input-wrap {
+    -fx-background-color: #2d2d2d;
+    -fx-background-radius: 10;
+    -fx-border-color: #3c3c3c;
+    -fx-border-width: 1;
+    -fx-border-radius: 10;
+}
+.ai-input-wrap:focused-within {
+    -fx-border-color: #0e639c;
+}
+
+/* AI 底部工具栏：统一间距与内边距 */
+.ai-bottom-toolbar {
+    -fx-padding: 8 4 0 4;
+}
+
+/* AI 连接状态指示器默认样式（运行时由 setStyle 动态切绿/红） */
+.ai-conn-indicator {
+    -fx-text-fill: #3fb950;
+    -fx-font-size: 11px;
+}
+
+/* Send button */
+.ai-send-btn {
+    -fx-background-color: #0e639c;
+    -fx-text-fill: white;
+    -fx-font-size: 12px;
+    -fx-font-weight: bold;
+    -fx-background-radius: 6;
+    -fx-cursor: hand;
+}
+.ai-send-btn:hover {
+    -fx-background-color: #1177bb;
+}
+
+/* Stop button (send button in generating state) */
+.ai-stop-btn {
+    -fx-background-color: #b62324;
+    -fx-text-fill: white;
+}
+.ai-stop-btn:hover {
+    -fx-background-color: #da3633;
+}
+
+/* Message action buttons (copy / regenerate) on AI bubbles */
+.ai-msg-action-btn {
+    -fx-background-color: transparent;
+    -fx-text-fill: #888;
+    -fx-font-size: 11px;
+    -fx-padding: 2 8;
+    -fx-background-radius: 4;
+    -fx-border-color: #3c3c3c;
+    -fx-border-width: 1;
+    -fx-border-radius: 4;
+    -fx-cursor: hand;
+}
+.ai-msg-action-btn:hover {
+    -fx-background-color: #333;
+    -fx-text-fill: #d4d4d4;
+}
+
+/* Chat message bubbles */
+.ai-bubble-user {
+    -fx-background-color: #1f6feb;
+    -fx-background-radius: 12;
+    -fx-padding: 10 14;
+}
+.ai-bubble-assistant {
+    -fx-background-color: #2a2a2a;
+    -fx-background-radius: 12;
+    -fx-padding: 10 14;
+}
+
+/* 修复项1：可选中文本容器
+   - .ai-bubble-user-text：用户气泡内的 TextArea，伪装成蓝色气泡上的白色文字
+     （透明背景/无边框/无内边距，视觉与原 Label 一致，但原生支持拖选 + Ctrl+C）
+   - .ai-bubble-select-text：AI 气泡点"选择文本"后切换出的 TextArea，深色底 + 细边框 */
+.ai-bubble-user-text {
+    -fx-background-color: transparent;
+    -fx-background-insets: 0;
+    -fx-background-radius: 0;
+    -fx-border-width: 0;
+    -fx-border-insets: 0;
+    -fx-padding: 0;
+    -fx-text-fill: white;
+    -fx-font-size: 13px;
+    -fx-highlight-fill: #264f78;
+    -fx-highlight-text-fill: white;
+}
+.ai-bubble-user-text .content,
+.ai-bubble-user-text:focused {
+    -fx-background-color: transparent;
+    -fx-background-insets: 0;
+    -fx-border-width: 0;
+}
+.ai-bubble-select-text {
+    -fx-control-inner-background: #1e1e2e;
+    -fx-background-color: #1e1e2e;
+    -fx-background-insets: 0;
+    -fx-background-radius: 6;
+    -fx-border-color: #30363d;
+    -fx-border-width: 1;
+    -fx-border-radius: 6;
+    -fx-text-fill: #e6edf3;
+    -fx-font-size: 13px;
+    -fx-padding: 6 8;
+    -fx-highlight-fill: #264f78;
+    -fx-highlight-text-fill: white;
+}
+
+/* AI 气泡可选中文本区（MarkdownRenderer 渲染的非代码文本）
+   透明背景/无边框/无内边距，伪装成气泡上的纯文本，原生支持拖选 + Ctrl+C */
+.ai-bubble-text-selectable {
+    -fx-control-inner-background: transparent;
+    -fx-background-color: transparent;
+    -fx-background-insets: 0;
+    -fx-background-radius: 0;
+    -fx-border-color: transparent;
+    -fx-border-width: 0;
+    -fx-border-insets: 0;
+    -fx-padding: 0;
+    -fx-text-fill: #e6edf3;
+    -fx-font-size: 13px;
+    -fx-font-family: 'Cascadia Code', 'Consolas', 'Microsoft YaHei', monospace;
+    -fx-line-spacing: 2;
+    -fx-highlight-fill: #264f78;
+    -fx-highlight-text-fill: white;
+}
+.ai-bubble-text-selectable .content {
+    -fx-background-color: transparent;
+    -fx-padding: 0;
+}
+.ai-bubble-text-selectable:focused {
+    -fx-focus-color: transparent;
+    -fx-faint-focus-color: transparent;
+    -fx-border-color: transparent;
+}
+
+/* Welcome screen */
+.ai-welcome-icon {
+    -fx-background-color: #2a2a2a;
+    -fx-background-radius: 12;
+}
+
+/* Connection indicator */
+.ai-connected {
+    -fx-text-fill: #3fb950;
+}
+.ai-disconnected {
+    -fx-text-fill: #f85149;
+}
+
+/* ========== Markdown Rendering - Syntax Highlighting ========== */
+
+/* 行号样式 */
+.ai-line-number {
+    -fx-text-fill: #6e7681;
+    -fx-font-family: "Cascadia Code", "Consolas", "Courier New", monospace;
+}
+
+/* 语法高亮 - 关键字（红色） */
+.ai-syntax-keyword {
+    -fx-text-fill: #ff7b72;
+    -fx-font-weight: bold;
+}
+
+/* 语法高亮 - 字符串（蓝色） */
+.ai-syntax-string {
+    -fx-text-fill: #a5d6ff;
+}
+
+/* 语法高亮 - 注释（灰色） */
+.ai-syntax-comment {
+    -fx-text-fill: #8b949e;
+    -fx-font-style: italic;
+}
+
+/* 语法高亮 - 数字（蓝色） */
+.ai-syntax-number {
+    -fx-text-fill: #79c0ff;
+}
+
+/* 警告文本（黄色） */
+.ai-warning-text {
+    -fx-text-fill: #d29922;
+}
+
+/* ========== Markdown Rendering - 段落与标题 ========== */
+
+/* 普通段落 */
+.ai-md-paragraph {
+    -fx-font-size: 13px;
+    -fx-text-fill: #e6edf3;
+    -fx-line-spacing: 2;
+}
+
+/* 一级标题 */
+.ai-md-h1 {
+    -fx-font-size: 18px;
+    -fx-font-weight: bold;
+    -fx-text-fill: #f0f6fc;
+    -fx-padding: 4 0 2 0;
+}
+
+/* 二级标题 */
+.ai-md-h2 {
+    -fx-font-size: 16px;
+    -fx-font-weight: bold;
+    -fx-text-fill: #f0f6fc;
+    -fx-padding: 4 0 2 0;
+}
+
+/* 三级标题 */
+.ai-md-h3 {
+    -fx-font-size: 14px;
+    -fx-font-weight: bold;
+    -fx-text-fill: #f0f6fc;
+    -fx-padding: 2 0 2 0;
+}
+
+/* ========== 发送到终端按钮 ========== */
+
+/* 发送到终端按钮（蓝色） */
+.ai-send-terminal-btn {
+    -fx-background-color: #1f6feb;
+    -fx-text-fill: white;
+    -fx-border-color: #388bfd;
+    -fx-border-width: 1;
+    -fx-border-radius: 4;
+    -fx-background-radius: 4;
+    -fx-padding: 2 8;
+    -fx-font-size: 11px;
+    -fx-cursor: hand;
+}
+.ai-send-terminal-btn:hover {
+    -fx-background-color: #388bfd;
+    -fx-text-fill: white;
+}
+
+/* ========== Left Panel - 服务器监控 UI 完善 ========== */
+
+/* 面板标题栏 */
+.left-panel-header {
+    -fx-padding: 10 12;
+    -fx-background-color: #1e1e1e;
+    -fx-border-color: #3c3c3c;
+    -fx-border-width: 0 0 1 0;
+}
+.left-panel-title {
+    -fx-text-fill: #d4d4d4;
+    -fx-font-size: 13px;
+    -fx-font-weight: bold;
+}
+
+/* 面板内收纳按钮（与右面板 ✕ 对称） */
+.left-collapse-btn {
+    -fx-background-color: transparent;
+    -fx-text-fill: #888;
+    -fx-font-size: 12px;
+    -fx-padding: 2 6;
+    -fx-cursor: hand;
+    -fx-background-radius: 3;
+}
+.left-collapse-btn:hover {
+    -fx-background-color: #3c3c3c;
+    -fx-text-fill: #d4d4d4;
+}
+
+/* 服务器信息区 */
+.server-info-box {
+    -fx-padding: 8 12;
+    -fx-background-color: #1e1e1e;
+    -fx-border-color: #3c3c3c;
+    -fx-border-width: 0 0 1 0;
+}
+.server-info-key {
+    -fx-text-fill: #666;
+    -fx-font-size: 10px;
+    -fx-font-weight: bold;
+    -fx-min-width: 28;
+}
+.server-info-ip {
+    -fx-text-fill: #d4d4d4;
+    -fx-font-size: 12px;
+    -fx-font-weight: bold;
+}
+.server-info-sys-row {
+    -fx-cursor: hand;
+}
+.server-info-sys {
+    -fx-text-fill: #0e639c;
+    -fx-font-size: 10px;
+}
+.server-info-arrow {
+    -fx-text-fill: #666;
+    -fx-font-size: 10px;
+}
+
+/* 图标按钮（复制 IP 等） */
+.icon-btn {
+    -fx-background-color: transparent;
+    -fx-text-fill: #666;
+    -fx-font-size: 12px;
+    -fx-padding: 0 4;
+    -fx-cursor: hand;
+}
+.icon-btn:hover {
+    -fx-text-fill: #d4d4d4;
+}
+
+/* 区块标题栏（统一风格，可点击折叠） */
+.monitor-section-header {
+    -fx-padding: 7 12;
+    -fx-background-color: #2d2d2d;
+    -fx-border-color: #3c3c3c;
+    -fx-border-width: 0 0 1 0;
+    -fx-cursor: hand;
+}
+.monitor-section-header:hover {
+    -fx-background-color: #383838;
+}
+.monitor-section-arrow {
+    -fx-text-fill: #888;
+    -fx-font-size: 10px;
+}
+.monitor-section-title {
+    -fx-font-weight: bold;
+    -fx-font-size: 11px;
+}
+.monitor-title-status { -fx-text-fill: #0dbc79; }
+.monitor-title-monitor { -fx-text-fill: #2472c8; }
+.monitor-title-top { -fx-text-fill: #e5e510; }
+.monitor-title-network { -fx-text-fill: #d4d4d4; }
+.monitor-title-disk { -fx-text-fill: #e5e510; }
+.monitor-title-log { -fx-text-fill: #cd3131; }
+
+/* 区块内容容器 */
+.monitor-section-content {
+    -fx-padding: 8 12 10 12;
+    -fx-background-color: #252526;
+}
+
+/* 状态行（Status / Log 通用） */
+.status-row {
+    -fx-alignment: CENTER_LEFT;
+}
+.status-key {
+    -fx-text-fill: #666;
+    -fx-font-size: 10px;
+    -fx-min-width: 36;
+}
+.status-value {
+    -fx-text-fill: #d4d4d4;
+    -fx-font-size: 10px;
+}
+.status-value-good { -fx-text-fill: #0dbc79; }
+.status-value-error { -fx-text-fill: #cd3131; }
+
+/* 监控行（CPU/MEM/DISK 进度条） */
+.monitor-row {
+    -fx-alignment: CENTER_LEFT;
+}
+.monitor-row-key {
+    -fx-text-fill: #888;
+    -fx-font-size: 10px;
+    -fx-font-weight: bold;
+    -fx-min-width: 34;
+}
+.monitor-row-value {
+    -fx-text-fill: #d4d4d4;
+    -fx-font-size: 10px;
+    -fx-min-width: 40;
+    -fx-alignment: CENTER_RIGHT;
+}
+.monitor-value-cpu { -fx-text-fill: #0dbc79; }
+.monitor-value-mem { -fx-text-fill: #2472c8; }
+.monitor-value-disk { -fx-text-fill: #e5e510; }
+
+/* 彩色进度条：CPU 绿 / MEM 蓝 / DISK 黄 */
+.monitor-bar-cpu .bar { -fx-background-color: #0dbc79; }
+.monitor-bar-mem .bar { -fx-background-color: #2472c8; }
+.monitor-bar-disk .bar { -fx-background-color: #e5e510; }
+
+/* 网络行 */
+.net-up-arrow {
+    -fx-text-fill: #0dbc79;
+    -fx-font-size: 11px;
+    -fx-font-weight: bold;
+    -fx-min-width: 12;
+}
+.net-down-arrow {
+    -fx-text-fill: #2472c8;
+    -fx-font-size: 11px;
+    -fx-font-weight: bold;
+    -fx-min-width: 12;
+}
+.net-value-up { -fx-text-fill: #0dbc79; -fx-font-size: 10px; }
+.net-value-down { -fx-text-fill: #2472c8; -fx-font-size: 10px; }
+.net-bar {
+    -fx-pref-height: 6px;
+}
+
+/* 进程 TOP 文本区：略放大字体（覆盖上方 9px 定义） */
+.top-process-text {
+    -fx-control-inner-background: #1e1e1e;
+    -fx-text-fill: #d4d4d4;
+    -fx-font-family: 'Consolas', monospace;
+    -fx-font-size: 10px;
+    -fx-border-color: #3c3c3c;
+    -fx-background-color: #1e1e1e;
+}
+
+/* ========== Top Process Table - 彩色列表格 ========== */
+
+.top-process-table {
+    -fx-background-color: transparent;
+    -fx-border-color: transparent;
+    -fx-padding: 0;
+    -fx-background-insets: 0;
+}
+.top-process-table .column-header-background {
+    -fx-background-color: #2d2d2d;
+    -fx-border-color: #3c3c3c;
+    -fx-border-width: 0 0 1 0;
+}
+.top-process-table .column-header {
+    -fx-background-color: transparent;
+    -fx-border-color: transparent;
+    -fx-padding: 4 6;
+    -fx-alignment: CENTER;
+}
+.top-process-table .column-header .label {
+    -fx-font-size: 9px;
+    -fx-font-weight: bold;
+}
+
+/* 彩色列头：浅蓝/浅红/浅黄区分每一列 */
+.column-header.top-col-user { -fx-background-color: rgba(121, 192, 255, 0.10); }
+.column-header.top-col-user .label { -fx-text-fill: #79c0ff; }
+.column-header.top-col-cpu { -fx-background-color: rgba(248, 81, 73, 0.10); }
+.column-header.top-col-cpu .label { -fx-text-fill: #f85149; }
+.column-header.top-col-mem { -fx-background-color: rgba(210, 153, 34, 0.10); }
+.column-header.top-col-mem .label { -fx-text-fill: #d29922; }
+.column-header.top-col-cmd { -fx-background-color: transparent; }
+.column-header.top-col-cmd .label { -fx-text-fill: #888; }
+
+/* 表格行：紧凑、透明、交替底色、hover 高亮 */
+.top-process-table .table-row-cell {
+    -fx-background-color: transparent;
+    -fx-border-color: transparent;
+    -fx-padding: 0;
+}
+.top-process-table .table-row-cell:odd {
+    -fx-background-color: rgba(255, 255, 255, 0.02);
+}
+.top-process-table .table-row-cell:hover {
+    -fx-background-color: rgba(0, 122, 204, 0.10);
+}
+.top-process-table .table-row-cell:selected {
+    -fx-background-color: #094771;
+}
+.top-process-table .table-cell {
+    -fx-border-color: transparent;
+    -fx-padding: 2 6;
+}
+.top-process-table .filler,
+.top-process-table .corner {
+    -fx-background-color: #2d2d2d;
+}
+
+/* ========== UI 炫酷化：渐变 + 光晕 ========== */
+
+/* 面板标题栏渐变 */
+.left-panel-header {
+    -fx-background-color: linear-gradient(to bottom, #2a2a2a, #1e1e1e);
+}
+
+/* 服务器信息区左侧蓝色色条（覆盖上方定义） */
+.server-info-box {
+    -fx-border-color: #3c3c3c transparent #3c3c3c #0e639c;
+    -fx-border-width: 0 0 1 3;
+}
+
+/* 区块标题栏渐变（覆盖上方定义） */
+.monitor-section-header {
+    -fx-background-color: linear-gradient(to right, #2d2d2d, #252526);
+}
+
+/* 进度条光晕效果 + 圆角（覆盖上方纯色定义） */
+.monitor-bar-cpu .bar {
+    -fx-background-color: #0dbc79;
+    -fx-effect: dropshadow(one-pass-box, rgba(13, 188, 121, 0.45), 3, 0, 0, 0);
+}
+.monitor-bar-mem .bar {
+    -fx-background-color: #2472c8;
+    -fx-effect: dropshadow(one-pass-box, rgba(36, 114, 200, 0.45), 3, 0, 0, 0);
+}
+.monitor-bar-disk .bar {
+    -fx-background-color: #e5e510;
+    -fx-effect: dropshadow(one-pass-box, rgba(229, 229, 16, 0.45), 3, 0, 0, 0);
+}
+
+/* ========== 设置对话框深色控件 ========== */
+
+/* TreeView 导航 */
+.tree-view {
+    -fx-background-color: #252526;
+    -fx-cell-focus-non-border: transparent;
+}
+.tree-view .tree-cell {
+    -fx-background-color: transparent;
+    -fx-text-fill: #d4d4d4;
+    -fx-padding: 4 8;
+}
+.tree-view .tree-cell:hover {
+    -fx-background-color: #2d2d2d;
+}
+.tree-view .tree-cell:selected {
+    -fx-background-color: #0e639c;
+    -fx-text-fill: white;
+}
+.tree-view .branch-disclosure-node .arrow {
+    -fx-background-color: #888;
+}
+
+/* ComboBox */
+.combo-box {
+    -fx-background-color: #2d2d2d;
+    -fx-border-color: #3c3c3c;
+    -fx-text-fill: #d4d4d4;
+}
+.combo-box .list-cell {
+    -fx-text-fill: #d4d4d4;
+    -fx-background-color: #2d2d2d;
+}
+.combo-box-popup .list-view {
+    -fx-background-color: #252526;
+    -fx-border-color: #3c3c3c;
+}
+.combo-box-popup .list-view .list-cell {
+    -fx-text-fill: #d4d4d4;
+    -fx-background-color: #252526;
+}
+.combo-box-popup .list-view .list-cell:hover {
+    -fx-background-color: #3c3c3c;
+}
+.combo-box-popup .list-view .list-cell:selected {
+    -fx-background-color: #0e639c;
+    -fx-text-fill: white;
+}
+.combo-box .arrow-button {
+    -fx-background-color: #2d2d2d;
+}
+.combo-box .arrow {
+    -fx-background-color: #888;
+}
+
+/* CheckBox */
+.check-box {
+    -fx-text-fill: #d4d4d4;
+}
+.check-box .box {
+    -fx-background-color: #2d2d2d;
+    -fx-border-color: #555;
+    -fx-border-width: 1;
+    -fx-border-radius: 2;
+}
+.check-box:selected .mark {
+    -fx-background-color: #0dbc79;
+}
+.check-box:selected .box {
+    -fx-border-color: #0dbc79;
+}
+
+/* TitledPane */
+.titled-pane {
+    -fx-text-fill: #d4d4d4;
+}
+.titled-pane > .title {
+    -fx-background-color: #2d2d2d;
+    -fx-border-color: #3c3c3c;
+    -fx-text-fill: #d4d4d4;
+}
+.titled-pane > .content {
+    -fx-background-color: #1e1e1e;
+    -fx-border-color: #3c3c3c;
+}
+
+/* Spinner */
+.spinner {
+    -fx-background-color: #2d2d2d;
+}
+.spinner .text-field {
+    -fx-background-color: #2d2d2d;
+    -fx-text-fill: #d4d4d4;
+    -fx-border-color: #3c3c3c;
+}
+.spinner .increment-arrow-button,
+.spinner .decrement-arrow-button {
+    -fx-background-color: #2d2d2d;
+    -fx-border-color: #3c3c3c;
+}
+.spinner .increment-arrow,
+.spinner .decrement-arrow {
+    -fx-background-color: #888;
+}
+
+/* Slider */
+.slider .track {
+    -fx-background-color: #3c3c3c;
+    -fx-background-radius: 2;
+}
+.slider .thumb {
+    -fx-background-color: #0e639c;
+    -fx-background-radius: 7;
+    -fx-effect: dropshadow(one-pass-box, rgba(14, 99, 156, 0.5), 3, 0, 0, 0);
+}
+
+/* ScrollPane（设置页滚动区） */
+.scroll-pane {
+    -fx-background-color: #1e1e1e;
+    -fx-background: #1e1e1e;
+}
+.scroll-pane .viewport {
+    -fx-background-color: #1e1e1e;
+}
+.scroll-bar:vertical {
+    -fx-background-color: #1e1e1e;
+}
+.scroll-bar:vertical .thumb {
+    -fx-background-color: #3c3c3c;
+    -fx-background-radius: 3;
+}
+.scroll-bar:vertical .thumb:hover {
+    -fx-background-color: #555;
+}
+
+/* 按钮（设置对话框） */
+.button {
+    -fx-background-color: #2d2d2d;
+    -fx-text-fill: #d4d4d4;
+    -fx-border-color: #3c3c3c;
+    -fx-border-radius: 4;
+    -fx-background-radius: 4;
+    -fx-cursor: hand;
+}
+.button:hover {
+    -fx-background-color: #3c3c3c;
+}
+.button:default {
+    -fx-background-color: #0e639c;
+    -fx-text-fill: white;
+    -fx-border-color: #0e639c;
+}
+.button:default:hover {
+    -fx-background-color: #1177bb;
+}
+
+/* TextField（快捷键/配色输入） */
+.text-field {
+    -fx-background-color: #2d2d2d;
+    -fx-text-fill: #d4d4d4;
+    -fx-border-color: #3c3c3c;
+    -fx-border-radius: 4;
+    -fx-prompt-text-fill: #666;
+}
+.text-field:focused {
+    -fx-border-color: #0e639c;
+}
+
+/* ========== Password Visibility Toggle (眼睛按钮) ========== */
+.pwd-toggle-btn {
+    -fx-background-color: #3c3c3c;
+    -fx-text-fill: #d4d4d4;
+    -fx-background-radius: 3;
+    -fx-border-radius: 3;
+    -fx-padding: 4 8;
+    -fx-font-size: 14px;
+    -fx-min-width: 38;
+    -fx-pref-width: 38;
+    -fx-max-width: 48;
+    -fx-cursor: hand;
+}
+.pwd-toggle-btn:hover {
+    -fx-background-color: #505050;
+}
+.pwd-toggle-btn:selected {
+    -fx-background-color: #0e639c;
+    -fx-text-fill: white;
+}
+.pwd-toggle-btn:armed {
+    -fx-background-color: #1177bb;
+}
+
+/* ========== Terminal Command Input Wrap (VS Code style) ========== */
+.terminal-input-wrap {
+    -fx-background-color: #1a1a1a;
+    -fx-background-radius: 6;
+    -fx-border-color: #2a2a2a;
+    -fx-border-width: 1;
+    -fx-border-radius: 6;
+    -fx-padding: 2 4;
+}
+.terminal-input-wrap:focused-within {
+    -fx-border-color: #0e639c;
+    -fx-background-color: #1e1e1e;
+}
