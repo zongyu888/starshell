@@ -6,6 +6,9 @@ on:
       - 'v*'
   workflow_dispatch:
 
+permissions:
+  contents: write  # 允许创建 Release
+
 jobs:
   build:
     name: Build on ${{ matrix.os }}
@@ -179,7 +182,7 @@ jobs:
           find artifacts -type f -name "*.zip"
 
       - name: Create Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           files: |
             artifacts/StarShell-windows/StarShell-*.zip
