@@ -440,7 +440,8 @@
                                         <argument>${project.basedir}/target/runtime</argument>
                                         <argument>--dest</argument>
                                         <argument>${project.basedir}/target/installer</argument>
-                                        <!-- macOS 不使用图标，避免 icns 格式问题 -->
+                                        <argument>--icon</argument>
+                                        <argument>${project.basedir}/src/main/resources/images/icon.icns</argument>
                                         <argument>--java-options</argument>
                                         <argument>-Xms256m</argument>
                                         <argument>--java-options</argument>
