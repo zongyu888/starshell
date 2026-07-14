@@ -337,7 +337,7 @@ git clone https://github.com/你的用户名/starshell.git
 ## 📞 联系方式
 
 - **GitHub Issues**: https://github.com/zongyu888/starshell/issues
-- **邮箱**: starshell@example.com
+- **邮箱**: moujimeng61739@163.com
 
 ---
 
