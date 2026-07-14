@@ -341,6 +341,62 @@
             <properties>
                 <javafx.platform>win</javafx.platform>
             </properties>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.codehaus.mojo</groupId>
+                        <artifactId>exec-maven-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>jpackage</id>
+                                <phase>package</phase>
+                                <goals>
+                                    <goal>exec</goal>
+                                </goals>
+                                <configuration>
+                                    <executable>${jdk.home}/bin/jpackage</executable>
+                                    <arguments>
+                                        <argument>--type</argument>
+                                        <argument>app-image</argument>
+                                        <argument>--name</argument>
+                                        <argument>StarShell</argument>
+                                        <argument>--vendor</argument>
+                                        <argument>StarShell</argument>
+                                        <argument>--description</argument>
+                                        <argument>StarShell</argument>
+                                        <argument>--app-version</argument>
+                                        <argument>1.0.0</argument>
+                                        <argument>--input</argument>
+                                        <argument>${project.basedir}/target/jpackage-input</argument>
+                                        <argument>--main-jar</argument>
+                                        <argument>${project.build.finalName}.jar</argument>
+                                        <argument>--main-class</argument>
+                                        <argument>com.aifinalshell.Launcher</argument>
+                                        <argument>--runtime-image</argument>
+                                        <argument>${project.basedir}/target/runtime</argument>
+                                        <argument>--dest</argument>
+                                        <argument>${project.basedir}/target/installer</argument>
+                                        <argument>--icon</argument>
+                                        <argument>${project.basedir}/src/main/resources/images/icon.ico</argument>
+                                        <argument>--java-options</argument>
+                                        <argument>-Xms256m</argument>
+                                        <argument>--java-options</argument>
+                                        <argument>-Xmx512m</argument>
+                                        <argument>--java-options</argument>
+                                        <argument>--add-opens</argument>
+                                        <argument>--java-options</argument>
+                                        <argument>java.base/java.lang=ALL-UNNAMED</argument>
+                                        <argument>--java-options</argument>
+                                        <argument>--add-opens</argument>
+                                        <argument>--java-options</argument>
+                                        <argument>java.desktop/sun.awt=ALL-UNNAMED</argument>
+                                    </argument>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
         </profile>
 
         <!-- macOS 平台 -->
@@ -349,6 +405,61 @@
             <properties>
                 <javafx.platform>mac</javafx.platform>
             </properties>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.codehaus.mojo</groupId>
+                        <artifactId>exec-maven-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>jpackage</id>
+                                <phase>package</phase>
+                                <goals>
+                                    <goal>exec</goal>
+                                </goals>
+                                <configuration>
+                                    <executable>${jdk.home}/bin/jpackage</executable>
+                                    <arguments>
+                                        <argument>--type</argument>
+                                        <argument>app-image</argument>
+                                        <argument>--name</argument>
+                                        <argument>StarShell</argument>
+                                        <argument>--vendor</argument>
+                                        <argument>StarShell</argument>
+                                        <argument>--description</argument>
+                                        <argument>StarShell</argument>
+                                        <argument>--app-version</argument>
+                                        <argument>1.0.0</argument>
+                                        <argument>--input</argument>
+                                        <argument>${project.basedir}/target/jpackage-input</argument>
+                                        <argument>--main-jar</argument>
+                                        <argument>${project.build.finalName}.jar</argument>
+                                        <argument>--main-class</argument>
+                                        <argument>com.aifinalshell.Launcher</argument>
+                                        <argument>--runtime-image</argument>
+                                        <argument>${project.basedir}/target/runtime</argument>
+                                        <argument>--dest</argument>
+                                        <argument>${project.basedir}/target/installer</argument>
+                                        <!-- macOS 不使用图标，避免 icns 格式问题 -->
+                                        <argument>--java-options</argument>
+                                        <argument>-Xms256m</argument>
+                                        <argument>--java-options</argument>
+                                        <argument>-Xmx512m</argument>
+                                        <argument>--java-options</argument>
+                                        <argument>--add-opens</argument>
+                                        <argument>--java-options</argument>
+                                        <argument>java.base/java.lang=ALL-UNNAMED</argument>
+                                        <argument>--java-options</argument>
+                                        <argument>--add-opens</argument>
+                                        <argument>--java-options</argument>
+                                        <argument>java.desktop/sun.awt=ALL-UNNAMED</argument>
+                                    </argument>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
         </profile>
 
         <!-- Linux 平台 -->
@@ -357,6 +468,62 @@
             <properties>
                 <javafx.platform>linux</javafx.platform>
             </properties>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.codehaus.mojo</groupId>
+                        <artifactId>exec-maven-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>jpackage</id>
+                                <phase>package</phase>
+                                <goals>
+                                    <goal>exec</goal>
+                                </goals>
+                                <configuration>
+                                    <executable>${jdk.home}/bin/jpackage</executable>
+                                    <arguments>
+                                        <argument>--type</argument>
+                                        <argument>app-image</argument>
+                                        <argument>--name</argument>
+                                        <argument>StarShell</argument>
+                                        <argument>--vendor</argument>
+                                        <argument>StarShell</argument>
+                                        <argument>--description</argument>
+                                        <argument>StarShell</argument>
+                                        <argument>--app-version</argument>
+                                        <argument>1.0.0</argument>
+                                        <argument>--input</argument>
+                                        <argument>${project.basedir}/target/jpackage-input</argument>
+                                        <argument>--main-jar</argument>
+                                        <argument>${project.build.finalName}.jar</argument>
+                                        <argument>--main-class</argument>
+                                        <argument>com.aifinalshell.Launcher</argument>
+                                        <argument>--runtime-image</argument>
+                                        <argument>${project.basedir}/target/runtime</argument>
+                                        <argument>--dest</argument>
+                                        <argument>${project.basedir}/target/installer</argument>
+                                        <argument>--icon</argument>
+                                        <argument>${project.basedir}/src/main/resources/images/icon.png</argument>
+                                        <argument>--java-options</argument>
+                                        <argument>-Xms256m</argument>
+                                        <argument>--java-options</argument>
+                                        <argument>-Xmx512m</argument>
+                                        <argument>--java-options</argument>
+                                        <argument>--add-opens</argument>
+                                        <argument>--java-options</argument>
+                                        <argument>java.base/java.lang=ALL-UNNAMED</argument>
+                                        <argument>--java-options</argument>
+                                        <argument>--add-opens</argument>
+                                        <argument>--java-options</argument>
+                                        <argument>java.desktop/sun.awt=ALL-UNNAMED</argument>
+                                    </argument>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
         </profile>
 
         <!-- 开发配置 -->

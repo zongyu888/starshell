@@ -11,6 +11,7 @@ jobs:
     name: Build on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false  # 一个平台失败不影响其他平台
       matrix:
         os: [windows-latest, macos-latest, ubuntu-latest]
         include:
@@ -32,17 +33,13 @@ jobs:
           java-version: '17'
           cache: maven
 
-      - name: Set JDK home (Windows)
-        if: matrix.os == 'windows-latest'
+      - name: Install dependencies (Linux)
+        if: matrix.os == 'ubuntu-latest'
         run: |
-          echo "JAVA_HOME=$env:JAVA_HOME" >> $env:GITHUB_ENV
-          echo "jdk.home=$env:JAVA_HOME" >> $env:GITHUB_ENV
-
-      - name: Set JDK home (Unix)
-        if: matrix.os != 'windows-latest'
-        run: |
-          echo "JAVA_HOME=$JAVA_HOME" >> $GITHUB_ENV
-          echo "jdk.home=$JAVA_HOME" >> $GITHUB_ENV
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libxtst-dev libxslt1.1 fakeroot rpm
+          # jpackage 需要 dpkg-deb 来创建 deb 包
+          sudo apt-get install -y dpkg-dev
 
       - name: Build with Maven (Windows)
         if: matrix.os == 'windows-latest'
@@ -62,17 +59,33 @@ jobs:
           cd java-client
           mvn clean package -DskipTests -Plinux "-Djdk.home=$JAVA_HOME"
 
-      - name: Check build output
+      - name: Check build output (Unix)
+        if: matrix.os != 'windows-latest'
         run: |
-          ls -la java-client/target/
+          echo "=== Checking target directory ==="
+          ls -la java-client/target/ || echo "target directory not found"
+          echo "=== Checking installer directory ==="
           ls -la java-client/target/installer/ || echo "installer directory not found"
+          echo "=== Checking StarShell directory ==="
+          ls -la java-client/target/installer/StarShell/ || echo "StarShell directory not found"
+
+      - name: Check build output (Windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          Write-Host "=== Checking target directory ==="
+          Get-ChildItem "java-client\target\" -ErrorAction SilentlyContinue
+          Write-Host "=== Checking installer directory ==="
+          Get-ChildItem "java-client\target\installer\" -ErrorAction SilentlyContinue
+          Write-Host "=== Checking StarShell directory ==="
+          Get-ChildItem "java-client\target\installer\StarShell\" -ErrorAction SilentlyContinue
 
       - name: Create distribution (Windows)
         if: matrix.os == 'windows-latest'
         run: |
           if (Test-Path "java-client\target\installer\StarShell") {
             cd java-client\target\installer\StarShell
-            Compress-Archive -Path . -DestinationPath "${{ github.workspace }}\StarShell-${{ github.ref_name }}-windows.zip"
+            Compress-Archive -Path . -DestinationPath "${{ github.workspace }}\StarShell-${{ github.ref_name }}-windows.zip" -Force
+            Write-Host "Windows zip created successfully"
           } else {
             Write-Error "Build output not found!"
             exit 1
@@ -84,8 +97,10 @@ jobs:
           if [ -d "java-client/target/installer/StarShell" ]; then
             cd java-client/target/installer/StarShell
             zip -r "${{ github.workspace }}/StarShell-${{ github.ref_name }}-macos.zip" .
+            echo "macOS zip created successfully"
           else
-            echo "Build output not found!"
+            echo "Build output not found! Checking what was created..."
+            find java-client/target -name "*.app" -o -name "*.dmg" -o -name "*.pkg" 2>/dev/null
             exit 1
           fi
 
@@ -95,8 +110,10 @@ jobs:
           if [ -d "java-client/target/installer/StarShell" ]; then
             cd java-client/target/installer/StarShell
             zip -r "${{ github.workspace }}/StarShell-${{ github.ref_name }}-linux.zip" .
+            echo "Linux zip created successfully"
           else
-            echo "Build output not found!"
+            echo "Build output not found! Checking what was created..."
+            find java-client/target -name "*.deb" -o -name "*.rpm" -o -name "*.tar.gz" 2>/dev/null
             exit 1
           fi
 
@@ -107,6 +124,7 @@ jobs:
           path: |
             ${{ github.workspace }}/StarShell-*.zip
           retention-days: 1
+        if: always()  # 即使构建失败也上传日志
 
   release:
     name: Create Release
@@ -121,7 +139,11 @@ jobs:
           path: artifacts
 
       - name: List downloaded files
-        run: find artifacts -type f -name "*.zip"
+        run: |
+          echo "=== All downloaded files ==="
+          find artifacts -type f
+          echo "=== Zip files ==="
+          find artifacts -type f -name "*.zip"
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
