@@ -17,6 +17,7 @@
         <maven.compiler.target>17</maven.compiler.target>
         <maven.compiler.release>17</maven.compiler.release>
         <javafx.version>17.0.2</javafx.version>
+        <javafx.platform>win</javafx.platform> <!-- 默认 Windows 平台 -->
         <jackson.version>2.15.2</jackson.version>
         <h2.version>2.2.224</h2.version>
         <jsch.version>0.1.55</jsch.version>
@@ -28,30 +29,30 @@
     </properties>
 
     <dependencies>
-        <!-- JavaFX (Windows classifiers for native libraries) -->
+        <!-- JavaFX - 多平台支持 -->
         <dependency>
             <groupId>org.openjfx</groupId>
             <artifactId>javafx-controls</artifactId>
             <version>${javafx.version}</version>
-            <classifier>win</classifier>
+            <classifier>${javafx.platform}</classifier>
         </dependency>
         <dependency>
             <groupId>org.openjfx</groupId>
             <artifactId>javafx-fxml</artifactId>
             <version>${javafx.version}</version>
-            <classifier>win</classifier>
+            <classifier>${javafx.platform}</classifier>
         </dependency>
         <dependency>
             <groupId>org.openjfx</groupId>
             <artifactId>javafx-graphics</artifactId>
             <version>${javafx.version}</version>
-            <classifier>win</classifier>
+            <classifier>${javafx.platform}</classifier>
         </dependency>
         <dependency>
             <groupId>org.openjfx</groupId>
             <artifactId>javafx-swing</artifactId>
             <version>${javafx.version}</version>
-            <classifier>win</classifier>
+            <classifier>${javafx.platform}</classifier>
         </dependency>
 
         <!-- SSH/SFTP -->
@@ -334,6 +335,31 @@
         打包时运行: mvn package -DskipTests -Djdk.home="C:\Program Files\Java\latest\jdk-26"
     -->
     <profiles>
+        <!-- Windows 平台 -->
+        <profile>
+            <id>windows</id>
+            <properties>
+                <javafx.platform>win</javafx.platform>
+            </properties>
+        </profile>
+
+        <!-- macOS 平台 -->
+        <profile>
+            <id>mac</id>
+            <properties>
+                <javafx.platform>mac</javafx.platform>
+            </properties>
+        </profile>
+
+        <!-- Linux 平台 -->
+        <profile>
+            <id>linux</id>
+            <properties>
+                <javafx.platform>linux</javafx.platform>
+            </properties>
+        </profile>
+
+        <!-- 开发配置 -->
         <profile>
             <id>dev</id>
             <build>
