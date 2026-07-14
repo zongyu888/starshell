@@ -117,7 +117,17 @@ jobs:
       - name: Create distribution (macOS)
         if: matrix.os == 'macos-latest'
         run: |
-          if [ -d "java-client/target/installer/StarShell" ]; then
+          echo "=== Checking installer directory ==="
+          ls -la java-client/target/installer/ || echo "installer directory not found"
+          
+          # macOS jpackage 生成 .app 目录
+          if [ -d "java-client/target/installer/StarShell.app" ]; then
+            echo "Found StarShell.app, creating zip..."
+            cd java-client/target/installer
+            zip -r "${{ github.workspace }}/StarShell-${{ github.ref_name }}-macos.zip" StarShell.app
+            echo "macOS zip created successfully"
+          elif [ -d "java-client/target/installer/StarShell" ]; then
+            echo "Found StarShell directory, creating zip..."
             cd java-client/target/installer/StarShell
             zip -r "${{ github.workspace }}/StarShell-${{ github.ref_name }}-macos.zip" .
             echo "macOS zip created successfully"
