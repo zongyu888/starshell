@@ -3,8 +3,8 @@ name: Build Release Packages
 on:
   push:
     tags:
-      - 'v*'  # 当推送 v 开头的 tag 时触发，如 v1.0.0
-  workflow_dispatch:  # 支持手动触发
+      - 'v*'
+  workflow_dispatch:
 
 jobs:
   build:
@@ -16,13 +16,10 @@ jobs:
         include:
           - os: windows-latest
             platform: windows
-            ext: .exe
           - os: macos-latest
             platform: macos
-            ext: .dmg
           - os: ubuntu-latest
             platform: linux
-            ext: .deb
 
     steps:
       - name: Checkout code
@@ -35,41 +32,73 @@ jobs:
           java-version: '17'
           cache: maven
 
+      - name: Set JDK home (Windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          echo "JAVA_HOME=$env:JAVA_HOME" >> $env:GITHUB_ENV
+          echo "jdk.home=$env:JAVA_HOME" >> $env:GITHUB_ENV
+
+      - name: Set JDK home (Unix)
+        if: matrix.os != 'windows-latest'
+        run: |
+          echo "JAVA_HOME=$JAVA_HOME" >> $GITHUB_ENV
+          echo "jdk.home=$JAVA_HOME" >> $GITHUB_ENV
+
       - name: Build with Maven (Windows)
         if: matrix.os == 'windows-latest'
         run: |
           cd java-client
-          mvn clean package -DskipTests -Pwindows
+          mvn clean package -DskipTests -Pwindows "-Djdk.home=$env:JAVA_HOME"
 
       - name: Build with Maven (macOS)
         if: matrix.os == 'macos-latest'
         run: |
           cd java-client
-          mvn clean package -DskipTests -Pmac
+          mvn clean package -DskipTests -Pmac "-Djdk.home=$JAVA_HOME"
 
       - name: Build with Maven (Linux)
         if: matrix.os == 'ubuntu-latest'
         run: |
           cd java-client
-          mvn clean package -DskipTests -Plinux
+          mvn clean package -DskipTests -Plinux "-Djdk.home=$JAVA_HOME"
+
+      - name: Check build output
+        run: |
+          ls -la java-client/target/
+          ls -la java-client/target/installer/ || echo "installer directory not found"
 
       - name: Create distribution (Windows)
         if: matrix.os == 'windows-latest'
         run: |
-          cd java-client/target/installer/StarShell
-          Compress-Archive -Path . -DestinationPath ${{ github.workspace }}/StarShell-${{ github.ref_name }}-windows.zip
+          if (Test-Path "java-client\target\installer\StarShell") {
+            cd java-client\target\installer\StarShell
+            Compress-Archive -Path . -DestinationPath "${{ github.workspace }}\StarShell-${{ github.ref_name }}-windows.zip"
+          } else {
+            Write-Error "Build output not found!"
+            exit 1
+          }
 
       - name: Create distribution (macOS)
         if: matrix.os == 'macos-latest'
         run: |
-          cd java-client/target/installer/StarShell
-          zip -r ${{ github.workspace }}/StarShell-${{ github.ref_name }}-macos.zip .
+          if [ -d "java-client/target/installer/StarShell" ]; then
+            cd java-client/target/installer/StarShell
+            zip -r "${{ github.workspace }}/StarShell-${{ github.ref_name }}-macos.zip" .
+          else
+            echo "Build output not found!"
+            exit 1
+          fi
 
       - name: Create distribution (Linux)
         if: matrix.os == 'ubuntu-latest'
         run: |
-          cd java-client/target/installer/StarShell
-          zip -r ${{ github.workspace }}/StarShell-${{ github.ref_name }}-linux.zip .
+          if [ -d "java-client/target/installer/StarShell" ]; then
+            cd java-client/target/installer/StarShell
+            zip -r "${{ github.workspace }}/StarShell-${{ github.ref_name }}-linux.zip" .
+          else
+            echo "Build output not found!"
+            exit 1
+          fi
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -77,6 +106,7 @@ jobs:
           name: StarShell-${{ matrix.platform }}
           path: |
             ${{ github.workspace }}/StarShell-*.zip
+          retention-days: 1
 
   release:
     name: Create Release
@@ -85,31 +115,21 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/')
 
     steps:
-      - name: Download Windows artifact
+      - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
-          name: StarShell-windows
-          path: artifacts/windows
+          path: artifacts
 
-      - name: Download macOS artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: StarShell-macos
-          path: artifacts/macos
-
-      - name: Download Linux artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: StarShell-linux
-          path: artifacts/linux
+      - name: List downloaded files
+        run: find artifacts -type f -name "*.zip"
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
           files: |
-            artifacts/windows/StarShell-*.zip
-            artifacts/macos/StarShell-*.zip
-            artifacts/linux/StarShell-*.zip
+            artifacts/StarShell-windows/StarShell-*.zip
+            artifacts/StarShell-macos/StarShell-*.zip
+            artifacts/StarShell-linux/StarShell-*.zip
           body: |
             ## 🚀 StarShell ${{ github.ref_name }}
 
@@ -119,11 +139,10 @@ jobs:
             - **macOS**: 下载 `StarShell-*-macos.zip`，解压后运行 `StarShell.app`
             - **Linux**: 下载 `StarShell-*-linux.zip`，解压后运行 `./StarShell`
 
-            ### 📝 更新日志
+            ### 📝 系统要求
 
-            - 新功能发布
-            - Bug 修复
-            - 性能优化
+            - 无需安装 Java（内置运行时）
+            - 需要网络连接以使用 AI 功能
 
             ### 💬 反馈
 
