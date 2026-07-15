@@ -133,7 +133,7 @@ public class OpenAiProvider implements AiProvider {
                     .header("Authorization", "Bearer " + apiKey)
                     .header("Content-Type", "application/json")
                     .POST(HttpRequest.BodyPublishers.ofString(requestBody))
-                    .timeout(Duration.ofSeconds(120))
+                    .timeout(Duration.ofSeconds(300))
                     .build();
 
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
@@ -172,7 +172,7 @@ public class OpenAiProvider implements AiProvider {
                     .header("Authorization", "Bearer " + apiKey)
                     .header("Content-Type", "application/json")
                     .POST(HttpRequest.BodyPublishers.ofString(requestBody))
-                    .timeout(Duration.ofSeconds(120))
+                    .timeout(Duration.ofSeconds(300))
                     .build();
 
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
@@ -227,7 +227,7 @@ public class OpenAiProvider implements AiProvider {
                     .header("Content-Type", "application/json")
                     .header("Accept", "text/event-stream")
                     .POST(HttpRequest.BodyPublishers.ofString(requestBody))
-                    .timeout(Duration.ofSeconds(120))
+                    .timeout(Duration.ofSeconds(300))
                     .build();
 
             streamHttpClient.sendAsync(request, HttpResponse.BodyHandlers.ofInputStream())
@@ -235,8 +235,60 @@ public class OpenAiProvider implements AiProvider {
                         if (response.statusCode() == 200) {
                             SseStreamParser.parse(response.body(), onToken, onComplete, onError);
                         } else {
-                            onError.accept(new RuntimeException(
-                                    "API Error " + response.statusCode()));
+                            try {
+                                String errBody = new String(response.body().readAllBytes());
+                                onError.accept(new RuntimeException(
+                                        "API Error " + response.statusCode() + ": " + errBody));
+                            } catch (Exception ex) {
+                                onError.accept(new RuntimeException(
+                                        "API Error " + response.statusCode()));
+                            }
+                        }
+                    })
+                    .exceptionally(ex -> {
+                        onError.accept(ex instanceof Exception e ? e :
+                                new RuntimeException(ex));
+                        return null;
+                    });
+        } catch (Exception e) {
+            onError.accept(e);
+        }
+    }
+
+    @Override
+    public void chatWithToolsStream(String model, List<ChatMessage> messages,
+                                     JsonNode tools, String apiKey, String baseUrl,
+                                     double temperature, int maxTokens,
+                                     Consumer<String> onToken,
+                                     Consumer<ChatResult> onComplete,
+                                     Consumer<Exception> onError) {
+        String url = resolveBaseUrl(baseUrl);
+
+        try {
+            String requestBody = buildRequestBody(model, messages, temperature, maxTokens, true, tools);
+
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(url + "/chat/completions"))
+                    .header("Authorization", "Bearer " + apiKey)
+                    .header("Content-Type", "application/json")
+                    .header("Accept", "text/event-stream")
+                    .POST(HttpRequest.BodyPublishers.ofString(requestBody))
+                    .timeout(Duration.ofSeconds(300))
+                    .build();
+
+            streamHttpClient.sendAsync(request, HttpResponse.BodyHandlers.ofInputStream())
+                    .thenAccept(response -> {
+                        if (response.statusCode() == 200) {
+                            SseStreamParser.parseWithTools(response.body(), onToken, onComplete, onError);
+                        } else {
+                            try {
+                                String errBody = new String(response.body().readAllBytes());
+                                onError.accept(new RuntimeException(
+                                        "API Error " + response.statusCode() + ": " + errBody));
+                            } catch (Exception ex) {
+                                onError.accept(new RuntimeException(
+                                        "API Error " + response.statusCode()));
+                            }
                         }
                     })
                     .exceptionally(ex -> {

@@ -3,9 +3,12 @@ package com.aifinalshell.provider.custom;
 import com.aifinalshell.ai.SseStreamParser;
 import com.aifinalshell.provider.AiProvider;
 import com.aifinalshell.provider.ChatMessage;
+import com.aifinalshell.provider.ChatResult;
 import com.aifinalshell.provider.ModelInfo;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -17,9 +20,6 @@ import java.time.Duration;
 import java.util.*;
 import java.util.function.Consumer;
 
-/**
- * Custom OpenAI-compatible provider with streaming SSE support.
- */
 public class CustomProvider implements AiProvider {
     private static final Logger logger = LoggerFactory.getLogger(CustomProvider.class);
     private final HttpClient httpClient;
@@ -39,6 +39,11 @@ public class CustomProvider implements AiProvider {
     @Override
     public String getName() {
         return "custom";
+    }
+
+    @Override
+    public boolean supportsFunctionCalling() {
+        return true;
     }
 
     @Override
@@ -66,7 +71,9 @@ public class CustomProvider implements AiProvider {
                 if (data != null && data.isArray()) {
                     for (JsonNode node : data) {
                         String id = node.get("id").asText();
-                        models.add(new ModelInfo(id, id, "custom", false));
+                        ModelInfo mi = new ModelInfo(id, id, "custom", true);
+                        mi.setSupportsTools(true);
+                        models.add(mi);
                     }
                 }
             }
@@ -82,14 +89,14 @@ public class CustomProvider implements AiProvider {
                        double temperature, int maxTokens) {
         try {
             String url = resolveChatUrl(baseUrl);
-            String requestBody = buildRequestBody(model, messages, temperature, maxTokens, false);
+            String requestBody = buildRequestBody(model, messages, temperature, maxTokens, false, null);
 
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(url))
                     .header("Authorization", "Bearer " + apiKey)
                     .header("Content-Type", "application/json")
                     .POST(HttpRequest.BodyPublishers.ofString(requestBody))
-                    .timeout(Duration.ofSeconds(120))
+                    .timeout(Duration.ofSeconds(300))
                     .build();
 
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
@@ -98,7 +105,11 @@ public class CustomProvider implements AiProvider {
                 JsonNode root = objectMapper.readTree(response.body());
                 JsonNode choices = root.get("choices");
                 if (choices != null && choices.size() > 0) {
-                    return choices.get(0).get("message").get("content").asText();
+                    JsonNode msg = choices.get(0).get("message");
+                    if (msg != null && msg.has("content") && !msg.get("content").isNull()) {
+                        return msg.get("content").asText();
+                    }
+                    return "";
                 }
             } else {
                 logger.error("Custom API error {}: {}", response.statusCode(), response.body());
@@ -113,13 +124,66 @@ public class CustomProvider implements AiProvider {
     }
 
     @Override
+    public ChatResult chatWithTools(String model, List<ChatMessage> messages,
+                                     JsonNode tools, String apiKey, String baseUrl,
+                                     double temperature, int maxTokens) {
+        try {
+            String url = resolveChatUrl(baseUrl);
+            String requestBody = buildRequestBody(model, messages, temperature, maxTokens, false, tools);
+
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(url))
+                    .header("Authorization", "Bearer " + apiKey)
+                    .header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(requestBody))
+                    .timeout(Duration.ofSeconds(300))
+                    .build();
+
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+
+            if (response.statusCode() == 200) {
+                JsonNode root = objectMapper.readTree(response.body());
+                JsonNode choices = root.get("choices");
+                if (choices != null && choices.size() > 0) {
+                    JsonNode message = choices.get(0).get("message");
+                    String content = "";
+                    if (message.has("content") && !message.get("content").isNull()) {
+                        content = message.get("content").asText();
+                    }
+
+                    List<ChatMessage.ToolCall> toolCalls = null;
+                    if (message.has("tool_calls") && message.get("tool_calls").isArray()) {
+                        toolCalls = new ArrayList<>();
+                        for (JsonNode tc : message.get("tool_calls")) {
+                            String id = tc.get("id").asText();
+                            String name = tc.get("function").get("name").asText();
+                            String args = tc.get("function").get("arguments").asText();
+                            toolCalls.add(new ChatMessage.ToolCall(id, name, args));
+                        }
+                    }
+
+                    return new ChatResult(content, toolCalls);
+                }
+            } else {
+                logger.error("Custom API error {}: {}", response.statusCode(), response.body());
+                return new ChatResult("API Error " + response.statusCode() + ": " + response.body(), null);
+            }
+        } catch (Exception e) {
+            logger.error("Custom chatWithTools failed", e);
+            return new ChatResult("Error: " + e.getMessage(), null);
+        }
+
+        return new ChatResult("No response from API", null);
+    }
+
+    @Override
     public void chatStream(String model, List<ChatMessage> messages, String apiKey,
                            String baseUrl, double temperature, int maxTokens,
                            Consumer<String> onToken, Runnable onComplete,
                            Consumer<Exception> onError) {
         try {
             String url = resolveChatUrl(baseUrl);
-            String requestBody = buildRequestBody(model, messages, temperature, maxTokens, true);
+            String requestBody = buildRequestBody(model, messages, temperature, maxTokens, true, null);
 
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(url))
@@ -127,7 +191,7 @@ public class CustomProvider implements AiProvider {
                     .header("Content-Type", "application/json")
                     .header("Accept", "text/event-stream")
                     .POST(HttpRequest.BodyPublishers.ofString(requestBody))
-                    .timeout(Duration.ofSeconds(120))
+                    .timeout(Duration.ofSeconds(300))
                     .build();
 
             streamHttpClient.sendAsync(request, HttpResponse.BodyHandlers.ofInputStream())
@@ -135,13 +199,62 @@ public class CustomProvider implements AiProvider {
                         if (response.statusCode() == 200) {
                             SseStreamParser.parse(response.body(), onToken, onComplete, onError);
                         } else {
-                            onError.accept(new RuntimeException(
-                                    "API Error " + response.statusCode()));
+                            try {
+                                String errBody = new String(response.body().readAllBytes());
+                                onError.accept(new RuntimeException(
+                                        "API Error " + response.statusCode() + ": " + errBody));
+                            } catch (Exception ex) {
+                                onError.accept(new RuntimeException(
+                                        "API Error " + response.statusCode()));
+                            }
                         }
                     })
                     .exceptionally(ex -> {
-                        onError.accept(ex instanceof Exception e ? e :
-                                new RuntimeException(ex));
+                        onError.accept(ex instanceof Exception e ? e : new RuntimeException(ex));
+                        return null;
+                    });
+        } catch (Exception e) {
+            onError.accept(e);
+        }
+    }
+
+    @Override
+    public void chatWithToolsStream(String model, List<ChatMessage> messages,
+                                     JsonNode tools, String apiKey, String baseUrl,
+                                     double temperature, int maxTokens,
+                                     Consumer<String> onToken,
+                                     Consumer<ChatResult> onComplete,
+                                     Consumer<Exception> onError) {
+        try {
+            String url = resolveChatUrl(baseUrl);
+            String requestBody = buildRequestBody(model, messages, temperature, maxTokens, true, tools);
+
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(url))
+                    .header("Authorization", "Bearer " + apiKey)
+                    .header("Content-Type", "application/json")
+                    .header("Accept", "text/event-stream")
+                    .POST(HttpRequest.BodyPublishers.ofString(requestBody))
+                    .timeout(Duration.ofSeconds(300))
+                    .build();
+
+            streamHttpClient.sendAsync(request, HttpResponse.BodyHandlers.ofInputStream())
+                    .thenAccept(response -> {
+                        if (response.statusCode() == 200) {
+                            SseStreamParser.parseWithTools(response.body(), onToken, onComplete, onError);
+                        } else {
+                            try {
+                                String errBody = new String(response.body().readAllBytes());
+                                onError.accept(new RuntimeException(
+                                        "API Error " + response.statusCode() + ": " + errBody));
+                            } catch (Exception ex) {
+                                onError.accept(new RuntimeException(
+                                        "API Error " + response.statusCode()));
+                            }
+                        }
+                    })
+                    .exceptionally(ex -> {
+                        onError.accept(ex instanceof Exception e ? e : new RuntimeException(ex));
                         return null;
                     });
         } catch (Exception e) {
@@ -154,16 +267,6 @@ public class CustomProvider implements AiProvider {
         return apiKey != null && !apiKey.isEmpty();
     }
 
-    /**
-     * 测试自定义 OpenAI 兼容 API 的连通性与模型可用性。
-     * 步骤：1) GET {baseUrl}/models 验证端点可达且 API Key 有效；
-     *       2) 若指定 model，POST {baseUrl}/chat/completions 发送最小请求验证该模型可调用。
-     *
-     * @param apiKey API 密钥
-     * @param baseUrl API 基础地址（如 https://api.deepseek.com/v1）
-     * @param model  模型 ID（可为 null/空，表示仅测试连通性不验证具体模型）
-     * @return TestResult 含成功标志、详细消息、可用模型列表
-     */
     public TestResult testConnection(String apiKey, String baseUrl, String model) {
         if (baseUrl == null || baseUrl.trim().isEmpty()) {
             return new TestResult(false, "Base URL 不能为空", null);
@@ -177,7 +280,6 @@ public class CustomProvider implements AiProvider {
             normalizedBase = normalizedBase.substring(0, normalizedBase.length() - 1);
         }
 
-        // === 步骤1：GET /models 验证连通性与密钥 ===
         List<String> availableModels;
         try {
             String url = normalizedBase + "/models";
@@ -194,12 +296,10 @@ public class CustomProvider implements AiProvider {
                 return new TestResult(false, "认证失败 (HTTP " + code + ")：API Key 无效或无权限", null);
             }
             if (code == 404) {
-                // 某些兼容服务不支持 /models 端点，跳过列表步骤，直接进入模型测试
                 availableModels = null;
             } else if (code != 200) {
                 return new TestResult(false, "连接失败 (HTTP " + code + ")：" + truncate(response.body(), 200), null);
             } else {
-                // 解析模型列表
                 availableModels = new ArrayList<>();
                 try {
                     JsonNode root = objectMapper.readTree(response.body());
@@ -220,13 +320,12 @@ public class CustomProvider implements AiProvider {
             return new TestResult(false, "连接异常：" + e.getMessage(), null);
         }
 
-        // === 步骤2：若指定模型，发送最小 chat 请求验证模型可调用 ===
         if (model != null && !model.trim().isEmpty()) {
             String testModel = model.trim();
             try {
                 String url = normalizedBase + "/chat/completions";
                 String requestBody = buildRequestBody(testModel,
-                        List.of(new ChatMessage("user", "hi")), 0.0, 1, false);
+                        List.of(new ChatMessage("user", "hi")), 0.0, 1, false, null);
 
                 HttpRequest request = HttpRequest.newBuilder()
                         .uri(URI.create(url))
@@ -253,16 +352,12 @@ public class CustomProvider implements AiProvider {
             }
         }
 
-        // 未指定模型：仅靠 /models 连通性判断
         String detail = availableModels != null && !availableModels.isEmpty()
                 ? "连接成功，共发现 " + availableModels.size() + " 个可用模型"
                 : "连接成功（/models 端点可用）";
         return new TestResult(true, detail, availableModels);
     }
 
-    /**
-     * 测试结果：成功标志 + 详细消息 + 可用模型列表（可能为 null）。
-     */
     public static class TestResult {
         private final boolean success;
         private final String message;
@@ -290,21 +385,25 @@ public class CustomProvider implements AiProvider {
     }
 
     private String buildRequestBody(String model, List<ChatMessage> messages,
-                                     double temperature, int maxTokens, boolean stream) throws Exception {
-        List<Map<String, String>> msgList = new ArrayList<>();
-        for (ChatMessage msg : messages) {
-            Map<String, String> m = new HashMap<>();
-            m.put("role", msg.getRole());
-            m.put("content", msg.getContent());
-            msgList.add(m);
-        }
-
-        Map<String, Object> body = new LinkedHashMap<>();
+                                     double temperature, int maxTokens, boolean stream,
+                                     JsonNode tools) throws Exception {
+        ObjectNode body = objectMapper.createObjectNode();
         body.put("model", model);
-        body.put("messages", msgList);
+
+        ArrayNode msgArray = objectMapper.createArrayNode();
+        for (ChatMessage msg : messages) {
+            msgArray.add(msg.toOpenAiJson());
+        }
+        body.set("messages", msgArray);
+
         body.put("temperature", temperature);
         body.put("max_tokens", maxTokens);
         if (stream) body.put("stream", true);
+
+        if (tools != null && tools.isArray() && tools.size() > 0) {
+            body.set("tools", tools);
+            body.put("tool_choice", "auto");
+        }
 
         return objectMapper.writeValueAsString(body);
     }

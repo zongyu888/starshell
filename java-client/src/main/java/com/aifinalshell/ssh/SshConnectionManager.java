@@ -167,7 +167,7 @@ public class SshConnectionManager {
         StringBuilder output = new StringBuilder();
         byte[] buffer = new byte[8192];
         long startTime = System.currentTimeMillis();
-        long timeout = 30000;
+        long timeout = 300000;
 
         while (true) {
             while (in.available() > 0) {

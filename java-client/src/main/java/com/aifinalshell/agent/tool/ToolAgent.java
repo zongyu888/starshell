@@ -14,48 +14,25 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.*;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
-/**
- * AI Agent that can call tools in a multi-step loop.
- *
- * Supports two execution paths:
- * 1. Native function calling: when provider.supportsFunctionCalling() is true,
- *    uses provider.chatWithTools() with OpenAI-format tools JSON.
- * 2. Text parsing fallback: when the provider does not support function calling,
- *    injects tool descriptions into the system prompt and parses JSON tool calls
- *    from the AI's text response.
- *
- * Tool results are fed back as proper tool messages (ChatMessage.tool()) for
- * native function calling, or as user messages for the fallback path.
- *
- * Supports streaming token output via executeStream() with simulated streaming
- * for intermediate and final responses.
- */
 public class ToolAgent {
     private static final Logger logger = LoggerFactory.getLogger(ToolAgent.class);
     private static final ObjectMapper objectMapper = new ObjectMapper();
 
-    /**
-     * 构造"已达最大工具步数"提示，注入最后一步让 AI 收尾总结。
-     * 步数上限从 AiConfigManager.getMaxToolSteps() 读取（默认 50，可调大近似不限制）。
-     */
     private static String buildMaxStepsPrompt(int maxSteps) {
         return "\n\n[SYSTEM NOTICE] You have reached the maximum number of tool call steps (" +
                 maxSteps + "). Please summarize the current progress and provide a final answer " +
                 "based on the information gathered so far. Do not attempt any more tool calls.";
     }
 
-    /**
-     * 连续工具调用硬失败次数阈值。超过即判定 AI 卡住，强制停止工具调用并向用户求助。
-     * 硬失败定义见 {@link #isHardToolFailure(String)}：明确的错误/权限拒绝/参数缺失等。
-     * 注意：空输出（如 cd/mkdir 等正常无输出命令）不计入失败，避免误判。
-     */
     private static final int STUCK_THRESHOLD = 3;
 
-    /**
-     * 构造"AI 已卡住"提示，注入对话让 AI 停止调用工具、向用户说明问题并求助。
-     */
     private static String buildStuckPrompt(int failures, List<String> recentErrors) {
         StringBuilder sb = new StringBuilder();
         sb.append("\n\n[SYSTEM NOTICE - STUCK DETECTED] ");
@@ -74,10 +51,6 @@ public class ToolAgent {
         return sb.toString();
     }
 
-    /**
-     * 判断工具执行结果是否为"硬失败"——明确的无产出错误，应计入卡住检测。
-     * 空输出不计入失败（cd/mkdir/sleep 等命令正常无输出），避免误判。
-     */
     private static boolean isHardToolFailure(String result) {
         if (result == null) return true;
         String trimmed = result.trim();
@@ -86,16 +59,11 @@ public class ToolAgent {
                 || trimmed.startsWith("Permission denied:")
                 || trimmed.startsWith("Error executing tool")
                 || trimmed.startsWith("Error: Unknown tool")
-                || trimmed.startsWith("Error: Missing required parameter");
+                || trimmed.startsWith("Error: Missing required parameter")
+                || trimmed.contains("AUTH_FAILED")
+                || trimmed.contains("SSH session is not connected");
     }
 
-    /**
-     * 强制 AI 停止工具调用并向用户求助。当连续失败达到 {@link #STUCK_THRESHOLD} 时触发：
-     * 1. 通过 onToken 向用户发出醒目的 ⚠️ 通知
-     * 2. 注入 buildStuckPrompt 让 AI 明确停止工具调用
-     * 3. 用不带 tools 的 provider.chat() 做最终调用（AI 无法再调用工具）
-     * 4. 流式输出最终答复并返回；调用失败时返回兜底说明
-     */
     private String forceFinalAnswer(AiProvider provider, String model,
                                     List<ChatMessage> messages,
                                     String apiKey, String baseUrl,
@@ -136,62 +104,27 @@ public class ToolAgent {
 
     private final ToolRegistry toolRegistry = ToolRegistry.getInstance();
 
-    // ========== Public API: Synchronous Execution ==========
-
-    /**
-     * Execute a user request with tool calling capability.
-     * Auto-approves ASK permissions (no UI callback).
-     *
-     * @return the final AI response after all tool calls are resolved
-     */
     public String execute(String userMessage, String systemPrompt, ToolContext context) {
         return execute(userMessage, systemPrompt, context, null, null);
     }
 
-    /**
-     * Execute a user request with tool calling capability and optional permission callback.
-     *
-     * @param askCallback callback for ASK permission requests; if null, ASK permissions
-     *                    are auto-approved (non-BLOCK results proceed)
-     * @return the final AI response after all tool calls are resolved
-     */
     public String execute(String userMessage, String systemPrompt, ToolContext context,
                           Consumer<ToolPermission.PermissionRequest> askCallback) {
         return execute(userMessage, systemPrompt, context, askCallback, null);
     }
 
-    /**
-     * Execute with conversation history (prior turns) for multi-turn memory.
-     * History is inserted between the system prompt and the current user message,
-     * giving the AI recall of previous conversation turns.
-     *
-     * @param history prior conversation messages (user/assistant turns, excluding system
-     *                and the current userMessage); null/empty for single-turn
-     */
     public String execute(String userMessage, String systemPrompt, ToolContext context,
                           Consumer<ToolPermission.PermissionRequest> askCallback,
                           List<ChatMessage> history) {
         return executeInternal(userMessage, systemPrompt, context, null, askCallback, history, null);
     }
 
-    // ========== Public API: Streaming Execution ==========
-
-    /**
-     * Streaming version with tool support.
-     * Runs the tool-calling loop in a background thread and streams the final
-     * response via onToken callback.
-     */
     public void executeStream(String userMessage, String systemPrompt, ToolContext context,
                                Consumer<String> onToken, Runnable onComplete,
                                Consumer<Exception> onError) {
         executeStream(userMessage, systemPrompt, context, onToken, onComplete, onError, null, null, null);
     }
 
-    /**
-     * Streaming version with tool support and permission callback.
-     *
-     * @param askCallback callback for ASK permission requests
-     */
     public void executeStream(String userMessage, String systemPrompt, ToolContext context,
                                Consumer<String> onToken, Runnable onComplete,
                                Consumer<Exception> onError,
@@ -199,15 +132,6 @@ public class ToolAgent {
         executeStream(userMessage, systemPrompt, context, onToken, onComplete, onError, askCallback, null, null);
     }
 
-    /**
-     * Streaming version with tool support, permission callback, conversation history,
-     * and a separate persisted-text callback.
-     * History gives the AI multi-turn memory of the conversation.
-     *
-     * @param history          prior conversation messages (user/assistant turns); null/empty for single-turn
-     * @param onPersistedText  receives ONLY the final natural-language reply (no tool/status logs)
-     *                         so the caller can persist it as the assistant message; null to ignore
-     */
     public void executeStream(String userMessage, String systemPrompt, ToolContext context,
                                Consumer<String> onToken, Runnable onComplete,
                                Consumer<Exception> onError,
@@ -227,16 +151,6 @@ public class ToolAgent {
         thread.start();
     }
 
-    // ========== Core Execution Logic ==========
-
-    /**
-     * Internal execution method shared by execute() and executeStream().
-     *
-     * @param onToken     optional streaming callback; if non-null, intermediate and
-     *                    final responses are streamed via this callback
-     * @param askCallback optional permission callback for ASK requests
-     * @return the final AI response
-     */
     private String executeInternal(String userMessage, String systemPrompt, ToolContext context,
                                     Consumer<String> onToken,
                                     Consumer<ToolPermission.PermissionRequest> askCallback,
@@ -257,10 +171,8 @@ public class ToolAgent {
         String baseUrl = config.getBaseUrl(providerName);
         double temperature = config.getTemperature();
         int maxTokens = config.getMaxTokens();
-        // 工具调用最大步数（可配置，默认 50；调大即近似不限制，让 AI 自主完成多步任务）
         int maxSteps = config.getMaxToolSteps();
 
-        // Choose execution path based on provider capability
         if (provider.supportsFunctionCalling()) {
             return executeWithFunctionCalling(provider, model, systemPrompt, userMessage,
                     context, apiKey, baseUrl, temperature, maxTokens, maxSteps, onToken, askCallback, history, onPersistedText);
@@ -270,12 +182,6 @@ public class ToolAgent {
         }
     }
 
-    // ========== Native Function Calling Path ==========
-
-    /**
-     * Execute using native function calling (OpenAI tool_use API).
-     * Tools are passed as a JSON array, and the API returns structured tool calls.
-     */
     private String executeWithFunctionCalling(AiProvider provider, String model,
                                                String systemPrompt, String userMessage,
                                                ToolContext context,
@@ -285,90 +191,148 @@ public class ToolAgent {
                                                Consumer<ToolPermission.PermissionRequest> askCallback,
                                                List<ChatMessage> history,
                                                Consumer<String> onPersistedText) {
-        // Build initial messages (system prompt does NOT include tool descriptions
-        // since tools are passed natively via the API)
         List<ChatMessage> messages = new ArrayList<>();
         messages.add(ChatMessage.system(systemPrompt));
-        // 对话记忆：在 system 之后、当前用户消息之前插入历史轮次，使 AI 能回忆前文
         if (history != null && !history.isEmpty()) {
             messages.addAll(history);
         }
         messages.add(ChatMessage.user(userMessage));
 
-        // Task 6: 长对话压缩——在进入工具调用循环前，若 token 用量超过上下文窗口 70% 则压缩
         int contextWindow = AiServiceClient.getInstance().getModelContextWindow(model);
         if (ContextCompactor.needsCompaction(messages, contextWindow)) {
             messages = ContextCompactor.compact(messages, provider, model, apiKey, baseUrl, contextWindow);
         }
 
-        // Get tools JSON in OpenAI format
         JsonNode toolsJson = toolRegistry.generateToolsJson();
 
-        // Stuck detection: track consecutive hard failures across all steps
         int consecutiveFailures = 0;
         List<String> recentErrors = new ArrayList<>();
 
         for (int step = 0; step < maxSteps; step++) {
             try {
-                // Inject max-steps notice on the last step
                 if (step == maxSteps - 1) {
                     messages.add(ChatMessage.user(buildMaxStepsPrompt(maxSteps)));
                 }
 
-                // Call API with tools
-                ChatResult result = provider.chatWithTools(model, messages, toolsJson,
-                        apiKey, baseUrl, temperature, maxTokens);
+                if (onToken != null) {
+                    onToken.accept("\n\n🤔 ");
+                }
+
+                ChatResult result = callWithToolsStream(provider, model, messages, toolsJson,
+                        apiKey, baseUrl, temperature, maxTokens, onToken);
+
+                if (result == null) {
+                    String err = "Error: AI request failed (no response)";
+                    if (onToken != null) onToken.accept("\n❌ " + err + "\n");
+                    return err;
+                }
 
                 String content = result.getContent();
                 boolean hasToolCalls = result.hasToolCalls();
 
-                // If no tool calls, this is the final response
                 if (!hasToolCalls) {
-                    if (onToken != null && content != null) {
-                        streamText(content, onToken);
+                    String textContent = content != null ? content : "";
+                    List<ParsedToolCall> textToolCalls = parseAllToolCalls(textContent);
+                    if (!textToolCalls.isEmpty()) {
+                        hasToolCalls = true;
+                        messages.add(ChatMessage.assistant(textContent));
+
+                        StringBuilder toolResultsSummary = new StringBuilder();
+                        for (ParsedToolCall tc : textToolCalls) {
+                            if (onToken != null) {
+                                onToken.accept("\n\n🔧 **执行工具**: `" + tc.toolName + "`\n");
+                                if (tc.args.containsKey("command")) {
+                                    onToken.accept("```bash\n" + tc.args.get("command") + "\n```\n");
+                                }
+                            }
+
+                            String toolResult = executeToolWithPermission(
+                                    tc.toolName, tc.args, context, askCallback);
+
+                            toolResultsSummary.append("Tool '").append(tc.toolName).append("' returned:\n")
+                                    .append(toolResult).append("\n\n");
+
+                            if (onToken != null) {
+                                String displayResult;
+                                if (toolResult.length() > 500) {
+                                    displayResult = toolResult.substring(0, 500) + "\n... (输出过长，已截断，完整输出见终端)\n";
+                                } else {
+                                    displayResult = toolResult;
+                                }
+                                if (!displayResult.trim().isEmpty() && !displayResult.trim().equals("(no output)")) {
+                                    onToken.accept("📤 **结果**:\n```\n" + displayResult + "\n```\n");
+                                } else {
+                                    onToken.accept("✅ 命令已执行（无输出或输出已在终端显示）\n");
+                                }
+                            }
+
+                            if (isHardToolFailure(toolResult)) {
+                                consecutiveFailures++;
+                                recentErrors.add(tc.toolName + " -> " + toolResult.trim());
+                                if (consecutiveFailures >= STUCK_THRESHOLD) {
+                                    messages.add(ChatMessage.user(toolResultsSummary.toString()
+                                            + "Please analyze these results and continue, or provide final answer."));
+                                    return forceFinalAnswer(provider, model, messages, apiKey, baseUrl,
+                                            temperature, maxTokens, onToken, consecutiveFailures, recentErrors, onPersistedText);
+                                }
+                            } else {
+                                consecutiveFailures = 0;
+                            }
+                        }
+
+                        messages.add(ChatMessage.user(
+                                toolResultsSummary.toString()
+                                        + "Please analyze these results and continue with more tool calls if needed, "
+                                        + "or provide a final answer to the user."));
+                        continue;
                     }
-                    String reply = content != null ? content : "";
+
+                    String text = textContent;
+                    if (onToken != null && !text.isEmpty()) {
+                        if (text.startsWith("\n\n🤔")) {
+                            text = text.substring("\n\n🤔".length());
+                        }
+                    }
+                    String reply = textContent.trim();
                     if (onPersistedText != null && !reply.isEmpty()) {
                         onPersistedText.accept(reply);
                     }
                     return reply;
                 }
 
-                // Stream any content the AI provided alongside tool calls
-                if (onToken != null && content != null && !content.isEmpty()) {
-                    streamText(content, onToken);
-                }
-
-                // Add assistant message with tool calls
                 messages.add(ChatMessage.assistant(content, result.getToolCalls()));
 
-                // Process each tool call
                 for (ChatMessage.ToolCall toolCall : result.getToolCalls()) {
                     String toolName = toolCall.getName();
                     Map<String, Object> args = parseArgsFromJson(toolCall.getArgumentsAsJson());
 
-                    // Emit status message for streaming
                     if (onToken != null) {
-                        onToken.accept("\n\n[Executing tool: " + toolName + "]\n");
+                        onToken.accept("\n\n🔧 **执行工具**: `" + toolName + "`\n");
+                        if (args.containsKey("command")) {
+                            onToken.accept("```bash\n" + args.get("command") + "\n```\n");
+                        }
                     }
 
-                    // Execute tool with permission check
                     String toolResult = executeToolWithPermission(
                             toolName, args, context, askCallback);
 
-                    // Add tool result as a proper tool message
                     messages.add(ChatMessage.tool(toolCall.getId(), toolName, toolResult));
 
-                    // Emit result summary for streaming
                     if (onToken != null) {
-                        String summary = toolResult.length() > 200
-                                ? toolResult.substring(0, 200) + "...\n"
-                                : toolResult + "\n";
-                        onToken.accept("[Result]: " + summary);
+                        String displayResult;
+                        if (toolResult.length() > 500) {
+                            String preview = toolResult.substring(0, 500);
+                            displayResult = preview + "\n... (输出过长，已截断，完整输出见终端)\n";
+                        } else {
+                            displayResult = toolResult;
+                        }
+                        if (!displayResult.trim().isEmpty() && !displayResult.trim().equals("(no output)")) {
+                            onToken.accept("📤 **结果**:\n```\n" + displayResult + "\n```\n");
+                        } else {
+                            onToken.accept("✅ 命令已执行（无输出或输出已在终端显示）\n");
+                        }
                     }
 
-                    // Stuck detection: count consecutive hard failures; force final
-                    // answer (stop tools + notify user) when threshold is reached.
                     if (isHardToolFailure(toolResult)) {
                         consecutiveFailures++;
                         recentErrors.add(toolName + " -> " + toolResult.trim());
@@ -384,26 +348,18 @@ public class ToolAgent {
             } catch (Exception e) {
                 logger.error("Function calling step {} failed", step, e);
                 String error = "Error during tool execution: " + e.getMessage();
-                if (onToken != null) onToken.accept(error);
+                if (onToken != null) onToken.accept("\n❌ " + error + "\n");
                 return error;
             }
         }
 
         String limitMsg = "Reached maximum tool call steps (" + maxSteps + "). " +
                 "The task may require more steps to complete fully.";
-        if (onToken != null) onToken.accept(limitMsg);
+        if (onToken != null) onToken.accept("\n⚠️ " + limitMsg + "\n");
         if (onPersistedText != null) onPersistedText.accept(limitMsg);
         return limitMsg;
     }
 
-    // ========== Text Parsing Fallback Path ==========
-
-    /**
-     * Execute using text-based tool call parsing (fallback for providers without
-     * native function calling support).
-     * Tool descriptions are injected into the system prompt, and tool calls are
-     * parsed from JSON in the AI's text response.
-     */
     private String executeWithTextParsing(AiProvider provider, String model,
                                            String systemPrompt, String userMessage,
                                            ToolContext context,
@@ -413,121 +369,193 @@ public class ToolAgent {
                                            Consumer<ToolPermission.PermissionRequest> askCallback,
                                            List<ChatMessage> history,
                                            Consumer<String> onPersistedText) {
-        // Build system prompt with tool descriptions
         String fullSystemPrompt = systemPrompt + "\n\n" + toolRegistry.generateToolsPrompt();
 
         List<ChatMessage> messages = new ArrayList<>();
         messages.add(ChatMessage.system(fullSystemPrompt));
-        // 对话记忆：在 system 之后、当前用户消息之前插入历史轮次
         if (history != null && !history.isEmpty()) {
             messages.addAll(history);
         }
         messages.add(ChatMessage.user(userMessage));
 
-        // Task 6: 长对话压缩——在进入工具调用循环前，若 token 用量超过上下文窗口 70% 则压缩
         int contextWindow = AiServiceClient.getInstance().getModelContextWindow(model);
         if (ContextCompactor.needsCompaction(messages, contextWindow)) {
             messages = ContextCompactor.compact(messages, provider, model, apiKey, baseUrl, contextWindow);
         }
 
-        // Stuck detection: track consecutive hard failures across all steps
         int consecutiveFailures = 0;
         List<String> recentErrors = new ArrayList<>();
 
         for (int step = 0; step < maxSteps; step++) {
             try {
-                // Inject max-steps notice on the last step
                 if (step == maxSteps - 1) {
                     messages.add(ChatMessage.user(buildMaxStepsPrompt(maxSteps)));
                 }
 
-                String response = provider.chat(model, messages, apiKey, baseUrl,
-                        temperature, maxTokens);
-
-                // Check for tool call in response
-                ParsedToolCall toolCall = parseToolCall(response);
-
-                if (toolCall == null) {
-                    // No tool call - stream and return final response
-                    if (onToken != null) {
-                        streamText(response, onToken);
-                    }
-                    if (onPersistedText != null && response != null) {
-                        onPersistedText.accept(response);
-                    }
-                    return response;
+                if (onToken != null) {
+                    onToken.accept("\n\n🤔 ");
                 }
 
-                // Add assistant response to message history
+                String response = callStream(provider, model, messages, apiKey, baseUrl,
+                        temperature, maxTokens, onToken);
+
+                if (response == null) {
+                    String err = "Error: AI request failed (no response)";
+                    if (onToken != null) onToken.accept("\n❌ " + err + "\n");
+                    return err;
+                }
+
+                List<ParsedToolCall> toolCalls = parseAllToolCalls(response);
+
+                if (toolCalls.isEmpty()) {
+                    String cleaned = response;
+                    if (cleaned.startsWith("\n\n🤔")) {
+                        cleaned = cleaned.substring("\n\n🤔".length());
+                    }
+                    cleaned = cleaned.trim();
+                    if (onToken != null) {
+                        streamText(cleaned, onToken);
+                    }
+                    if (onPersistedText != null && !cleaned.isEmpty()) {
+                        onPersistedText.accept(cleaned);
+                    }
+                    return cleaned;
+                }
+
                 messages.add(ChatMessage.assistant(response));
 
-                // Emit status message for streaming
-                if (onToken != null) {
-                    onToken.accept("\n\n[Executing tool: " + toolCall.toolName + "]\n");
-                }
-
-                // Execute tool with permission check
-                String toolResult = executeToolWithPermission(
-                        toolCall.toolName, toolCall.args, context, askCallback);
-
-                // Feed result back to AI as user message (fallback mode)
-                messages.add(ChatMessage.user(
-                        "Tool '" + toolCall.toolName + "' returned:\n" + toolResult +
-                        "\n\nPlease analyze this result and continue, or provide final answer."));
-
-                // Emit result summary for streaming
-                if (onToken != null) {
-                    String summary = toolResult.length() > 200
-                            ? toolResult.substring(0, 200) + "...\n"
-                            : toolResult + "\n";
-                    onToken.accept("[Result]: " + summary);
-                }
-
-                // Stuck detection: count consecutive hard failures; force final
-                // answer (stop tools + notify user) when threshold is reached.
-                if (isHardToolFailure(toolResult)) {
-                    consecutiveFailures++;
-                    recentErrors.add(toolCall.toolName + " -> " + toolResult.trim());
-                    if (consecutiveFailures >= STUCK_THRESHOLD) {
-                        return forceFinalAnswer(provider, model, messages, apiKey, baseUrl,
-                                temperature, maxTokens, onToken, consecutiveFailures, recentErrors, onPersistedText);
+                StringBuilder toolResultsSummary = new StringBuilder();
+                for (ParsedToolCall tc : toolCalls) {
+                    if (onToken != null) {
+                        onToken.accept("\n\n🔧 **执行工具**: `" + tc.toolName + "`\n");
+                        if (tc.args.containsKey("command")) {
+                            onToken.accept("```bash\n" + tc.args.get("command") + "\n```\n");
+                        }
                     }
-                } else {
-                    consecutiveFailures = 0;
+
+                    String toolResult = executeToolWithPermission(
+                            tc.toolName, tc.args, context, askCallback);
+
+                    toolResultsSummary.append("Tool '").append(tc.toolName).append("' returned:\n")
+                            .append(toolResult).append("\n\n");
+
+                    if (onToken != null) {
+                        String displayResult;
+                        if (toolResult.length() > 500) {
+                            displayResult = toolResult.substring(0, 500) + "\n... (输出过长，已截断)\n";
+                        } else {
+                            displayResult = toolResult;
+                        }
+                        if (!displayResult.trim().isEmpty() && !displayResult.trim().equals("(no output)")) {
+                            onToken.accept("📤 **结果**:\n```\n" + displayResult + "\n```\n");
+                        } else {
+                            onToken.accept("✅ 命令已执行\n");
+                        }
+                    }
+
+                    if (isHardToolFailure(toolResult)) {
+                        consecutiveFailures++;
+                        recentErrors.add(tc.toolName + " -> " + toolResult.trim());
+                        if (consecutiveFailures >= STUCK_THRESHOLD) {
+                            messages.add(ChatMessage.user(toolResultsSummary.toString()
+                                    + "Please analyze these results and continue, or provide final answer."));
+                            return forceFinalAnswer(provider, model, messages, apiKey, baseUrl,
+                                    temperature, maxTokens, onToken, consecutiveFailures, recentErrors, onPersistedText);
+                        }
+                    } else {
+                        consecutiveFailures = 0;
+                    }
                 }
+
+                messages.add(ChatMessage.user(
+                        toolResultsSummary.toString()
+                                + "Please analyze these results and continue with more tool calls if needed, "
+                                + "or provide a final answer to the user."));
 
             } catch (Exception e) {
                 logger.error("Text parsing step {} failed", step, e);
                 String error = "Error during tool execution: " + e.getMessage();
-                if (onToken != null) onToken.accept(error);
+                if (onToken != null) onToken.accept("\n❌ " + error + "\n");
                 return error;
             }
         }
 
         String limitMsg = "Reached maximum tool call steps (" + maxSteps + "). " +
                 "The task may require more steps to complete fully.";
-        if (onToken != null) onToken.accept(limitMsg);
+        if (onToken != null) onToken.accept("\n⚠️ " + limitMsg + "\n");
         if (onPersistedText != null) onPersistedText.accept(limitMsg);
         return limitMsg;
     }
 
-    // ========== Tool Execution with Permission Check ==========
+    private ChatResult callWithToolsStream(AiProvider provider, String model,
+                                            List<ChatMessage> messages, JsonNode tools,
+                                            String apiKey, String baseUrl,
+                                            double temperature, int maxTokens,
+                                            Consumer<String> onToken) throws Exception {
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicReference<ChatResult> resultRef = new AtomicReference<>();
+        AtomicReference<Exception> errorRef = new AtomicReference<>();
 
-    /**
-     * Execute a single tool call with permission checking.
-     * Uses checkWithCallback when askCallback is provided, otherwise uses
-     * the non-async check() method (auto-approves ASK results).
-     */
+        provider.chatWithToolsStream(model, messages, tools, apiKey, baseUrl, temperature, maxTokens,
+                token -> {
+                    if (onToken != null) onToken.accept(token);
+                },
+                result -> {
+                    resultRef.set(result);
+                    latch.countDown();
+                },
+                error -> {
+                    errorRef.set(error);
+                    latch.countDown();
+                });
+
+        boolean completed = latch.await(300, TimeUnit.SECONDS);
+        if (!completed) {
+            throw new Exception("AI request timed out after 300 seconds");
+        }
+        if (errorRef.get() != null) {
+            throw errorRef.get();
+        }
+        return resultRef.get();
+    }
+
+    private String callStream(AiProvider provider, String model,
+                               List<ChatMessage> messages,
+                               String apiKey, String baseUrl,
+                               double temperature, int maxTokens,
+                               Consumer<String> onToken) throws Exception {
+        CountDownLatch latch = new CountDownLatch(1);
+        StringBuilder sb = new StringBuilder();
+        AtomicReference<Exception> errorRef = new AtomicReference<>();
+
+        provider.chatStream(model, messages, apiKey, baseUrl, temperature, maxTokens,
+                token -> {
+                    sb.append(token);
+                    if (onToken != null) onToken.accept(token);
+                },
+                () -> latch.countDown(),
+                error -> {
+                    errorRef.set(error);
+                    latch.countDown();
+                });
+
+        boolean completed = latch.await(300, TimeUnit.SECONDS);
+        if (!completed) {
+            throw new Exception("AI request timed out after 300 seconds");
+        }
+        if (errorRef.get() != null) {
+            throw errorRef.get();
+        }
+        return sb.toString();
+    }
+
     private String executeToolWithPermission(String toolName, Map<String, Object> args,
                                               ToolContext context,
                                               Consumer<ToolPermission.PermissionRequest> askCallback) {
-        // Check permission
         boolean allowed;
         if (askCallback != null) {
-            // Use async permission check with callback
             allowed = ToolPermission.checkWithCallback(toolName, args, askCallback);
         } else {
-            // Non-async: auto-approve ASK, only block on BLOCK
             ToolPermission.PermissionResult perm = ToolPermission.check(toolName, args);
             allowed = (perm != ToolPermission.PermissionResult.BLOCK);
         }
@@ -538,21 +566,18 @@ public class ToolAgent {
             return "Permission denied: " + (warning != null ? warning : "Action blocked by security policy.");
         }
 
-        // Execute the tool
         ToolDefinition tool = toolRegistry.getTool(toolName);
         if (tool == null) {
             return "Error: Unknown tool '" + toolName + "'";
         }
 
-        // Required-argument validation: prevents AI from calling tools with missing
-        // required params (e.g. read_file without filePath), which previously caused
-        // silent failures and tool-loop spinning. Guides the AI to ask the user.
         JsonNode params = tool.getParameters();
         if (params != null && params.has("required") && params.get("required").isArray()) {
             JsonNode requiredArr = params.get("required");
             List<String> missing = new ArrayList<>();
             for (JsonNode req : requiredArr) {
                 String reqName = req.asText();
+                if ("dummy".equals(reqName)) continue;
                 Object val = args.get(reqName);
                 if (val == null || (val instanceof String && ((String) val).isEmpty())) {
                     missing.add(reqName);
@@ -565,13 +590,14 @@ public class ToolAgent {
             }
         }
 
-        // SSH 连接预检：所有内置工具都依赖远程 SSH 会话。若未连接则返回友好提示，
-        // 引导 AI 告知用户先连接服务器，而非抛 "SSH会话未连接: 1_1" 这类技术性错误。
         String sshKey = context.getSshKey();
-        if (!SshConnectionManager.getInstance().isConnected(sshKey)) {
-            return "Error: SSH session is not connected. The server is offline or has not been connected yet. "
-                    + "Please tell the user to click the 'Connect' button in the toolbar to connect to the server first, "
-                    + "then retry. Do NOT keep calling tools that require an SSH connection.";
+        if (sshKey != null && !sshKey.isEmpty() && !sshKey.equals("0")
+                && requiresSsh(toolName)) {
+            if (!SshConnectionManager.getInstance().isConnected(sshKey)) {
+                return "Error: SSH session is not connected. The server is offline or has not been connected yet. "
+                        + "Please tell the user to click the 'Connect' button in the toolbar to connect to the server first, "
+                        + "then retry. Do NOT keep calling tools that require an SSH connection.";
+            }
         }
 
         try {
@@ -582,25 +608,19 @@ public class ToolAgent {
         }
     }
 
-    // ========== Streaming Helper ==========
+    private boolean requiresSsh(String toolName) {
+        Set<String> localTools = Set.of();
+        return !localTools.contains(toolName);
+    }
 
-    /**
-     * Simulate streaming by emitting text in word-sized chunks.
-     */
     private void streamText(String text, Consumer<String> onToken) {
         if (text == null || text.isEmpty()) return;
-        // Split on whitespace boundaries, keeping the whitespace
         String[] chunks = text.split("(?<=\\s)");
         for (String chunk : chunks) {
             onToken.accept(chunk);
         }
     }
 
-    // ========== JSON Parsing Helpers ==========
-
-    /**
-     * Parse a JsonNode (from native function calling arguments) into a Map.
-     */
     private Map<String, Object> parseArgsFromJson(JsonNode argsNode) {
         Map<String, Object> args = new HashMap<>();
         if (argsNode == null || !argsNode.isObject()) {
@@ -618,6 +638,10 @@ public class ToolAgent {
                 args.put(entry.getKey(), val.asDouble());
             } else if (val.isBoolean()) {
                 args.put(entry.getKey(), val.asBoolean());
+            } else if (val.isArray()) {
+                args.put(entry.getKey(), val.toString());
+            } else if (val.isObject()) {
+                args.put(entry.getKey(), val.toString());
             } else {
                 args.put(entry.getKey(), val.asText());
             }
@@ -625,72 +649,297 @@ public class ToolAgent {
         return args;
     }
 
-    /**
-     * Parse tool call from AI text response (fallback path).
-     * Looks for JSON like: {"tool": "execute_shell", "args": {"command": "free -h"}}
-     */
-    private ParsedToolCall parseToolCall(String response) {
+    private List<ParsedToolCall> parseAllToolCalls(String response) {
+        List<ParsedToolCall> calls = new ArrayList<>();
+        if (response == null) return calls;
+
+        calls.addAll(parseXmlToolCalls(response));
+
+        if (calls.isEmpty()) {
+            ParsedToolCall jsonCall = parseJsonToolCall(response);
+            if (jsonCall != null) calls.add(jsonCall);
+        }
+
+        calls.addAll(parseBareToolCalls(response, calls));
+
+        return calls;
+    }
+
+    private static final Pattern TOOL_CALL_CLOSED = Pattern.compile(
+            "<tool_call>\\s*(\\w+)\\s*\\(\\s*(\\{.*?\\})\\s*\\)\\s*</tool_call>", Pattern.DOTALL);
+
+    private static final Pattern TOOL_CALL_OPEN = Pattern.compile(
+            "<tool_call>\\s*(\\w+)\\s*\\(\\s*(\\{[^}]*\\})\\s*\\)", Pattern.DOTALL);
+
+    private static final Pattern TOOL_CALL_SIMPLE_CLOSED = Pattern.compile(
+            "<tool_call>\\s*(\\w+)\\s*\\(\\s*(.*?)\\s*\\)\\s*</tool_call>", Pattern.DOTALL);
+
+    private static final Pattern TOOL_CALL_SIMPLE_OPEN = Pattern.compile(
+            "<tool_call>\\s*(\\w+)\\s*\\(\\s*([^)]*)\\s*\\)", Pattern.DOTALL);
+
+    private List<ParsedToolCall> parseXmlToolCalls(String response) {
+        List<ParsedToolCall> calls = new ArrayList<>();
+
+        Matcher m = TOOL_CALL_CLOSED.matcher(response);
+        while (m.find()) {
+            String toolName = m.group(1);
+            String argsJson = m.group(2);
+            Map<String, Object> args = parseJsonArgs(argsJson);
+            calls.add(new ParsedToolCall(toolName, args));
+        }
+
+        if (calls.isEmpty()) {
+            m = TOOL_CALL_OPEN.matcher(response);
+            while (m.find()) {
+                String toolName = m.group(1);
+                String argsJson = m.group(2);
+                Map<String, Object> args = parseJsonArgs(argsJson);
+                calls.add(new ParsedToolCall(toolName, args));
+            }
+        }
+
+        if (calls.isEmpty()) {
+            m = TOOL_CALL_SIMPLE_CLOSED.matcher(response);
+            while (m.find()) {
+                String toolName = m.group(1);
+                String argsStr = m.group(2);
+                Map<String, Object> args = parseSimpleArgs(argsStr);
+                if (!args.isEmpty() || isNoArgTool(toolName)) {
+                    calls.add(new ParsedToolCall(toolName, args));
+                }
+            }
+        }
+
+        if (calls.isEmpty()) {
+            m = TOOL_CALL_SIMPLE_OPEN.matcher(response);
+            while (m.find()) {
+                String toolName = m.group(1);
+                String argsStr = m.group(2);
+                Map<String, Object> args = parseSimpleArgs(argsStr);
+                if (!args.isEmpty() || isNoArgTool(toolName)) {
+                    calls.add(new ParsedToolCall(toolName, args));
+                }
+            }
+        }
+
+        return calls;
+    }
+
+    private List<ParsedToolCall> parseBareToolCalls(String response, List<ParsedToolCall> alreadyFound) {
+        List<ParsedToolCall> calls = new ArrayList<>();
+        if (!alreadyFound.isEmpty()) return calls;
+
+        Pattern barePattern = Pattern.compile(
+                "(?i)(?:execute_shell|run_in_terminal|read_log|list_processes|check_port|check_disk|" +
+                "check_memory|check_cpu|upload_file|list_services|manage_service|check_network|" +
+                "list_files|install_package|read_file|write_file|delete_file|download_file)\\s*\\(");
+        Matcher m = barePattern.matcher(response);
+        int pos = 0;
+        while (m.find(pos)) {
+            String matched = m.group();
+            String toolName = matched.substring(0, matched.indexOf('(')).trim().toLowerCase();
+            if (!toolRegistry.getAllTools().stream().anyMatch(t -> t.getName().equals(toolName))) {
+                pos = m.end();
+                continue;
+            }
+            int argsStart = m.end();
+            int argsEnd = findMatchingParen(response, argsStart - 1);
+            if (argsEnd < 0) {
+                pos = m.end();
+                continue;
+            }
+            String argsStr = response.substring(argsStart, argsEnd);
+            Map<String, Object> args = parseSimpleArgs(argsStr);
+            if (!args.isEmpty() || isNoArgTool(toolName)) {
+                calls.add(new ParsedToolCall(toolName, args));
+            }
+            pos = argsEnd + 1;
+        }
+        return calls;
+    }
+
+    private int findMatchingParen(String s, int openPos) {
+        int depth = 0;
+        boolean inString = false;
+        char stringChar = 0;
+        for (int i = openPos; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (inString) {
+                if (c == '\\' && i + 1 < s.length()) { i++; continue; }
+                if (c == stringChar) inString = false;
+            } else {
+                if (c == '"' || c == '\'') { inString = true; stringChar = c; }
+                else if (c == '(') depth++;
+                else if (c == ')') { depth--; if (depth == 0) return i; }
+            }
+        }
+        return -1;
+    }
+
+    private ParsedToolCall parseJsonToolCall(String response) {
         try {
             String json = response;
-            // Try to extract JSON from code blocks
             if (response.contains("```json")) {
                 json = response.split("```json")[1].split("```")[0].trim();
             } else if (response.contains("```")) {
-                json = response.split("```")[1].split("```")[0].trim();
+                String[] parts = response.split("```");
+                if (parts.length >= 2) {
+                    json = parts[1];
+                    if (json.startsWith("json") || json.startsWith("JSON")) {
+                        json = json.substring(4).trim();
+                    }
+                }
             }
 
-            // Try parsing as JSON
             JsonNode root;
             try {
                 root = objectMapper.readTree(json);
             } catch (Exception e) {
-                // Try finding JSON object in the response
                 int start = response.indexOf('{');
                 int end = response.lastIndexOf('}');
                 if (start >= 0 && end > start) {
-                    root = objectMapper.readTree(response.substring(start, end + 1));
+                    try {
+                        root = objectMapper.readTree(extractBalancedJson(response, start));
+                    } catch (Exception e2) {
+                        return null;
+                    }
                 } else {
                     return null;
                 }
             }
 
+            if (root == null || !root.isObject()) return null;
+
             if (root.has("tool") && root.has("args")) {
                 String toolName = root.get("tool").asText();
                 JsonNode argsNode = root.get("args");
-
                 Map<String, Object> args = new HashMap<>();
                 if (argsNode.isObject()) {
                     argsNode.fields().forEachRemaining(entry -> {
                         JsonNode val = entry.getValue();
-                        if (val == null || val.isNull()) {
-                            args.put(entry.getKey(), null);
-                        } else if (val.isInt()) {
-                            args.put(entry.getKey(), val.asInt());
-                        } else if (val.isLong()) {
-                            args.put(entry.getKey(), val.asLong());
-                        } else if (val.isDouble()) {
-                            args.put(entry.getKey(), val.asDouble());
-                        } else if (val.isBoolean()) {
-                            args.put(entry.getKey(), val.asBoolean());
-                        } else {
-                            args.put(entry.getKey(), val.asText());
-                        }
+                        args.put(entry.getKey(), jsonNodeToValue(val));
                     });
                 }
+                return new ParsedToolCall(toolName, args);
+            }
 
+            if (root.has("name") && (root.has("parameters") || root.has("arguments"))) {
+                String toolName = root.get("name").asText();
+                JsonNode argsNode = root.has("parameters") ? root.get("parameters") : root.get("arguments");
+                Map<String, Object> args = new HashMap<>();
+                if (argsNode != null && argsNode.isObject()) {
+                    argsNode.fields().forEachRemaining(entry -> {
+                        JsonNode val = entry.getValue();
+                        args.put(entry.getKey(), jsonNodeToValue(val));
+                    });
+                }
                 return new ParsedToolCall(toolName, args);
             }
         } catch (Exception e) {
-            logger.debug("Failed to parse tool call: {}", e.getMessage());
+            logger.debug("Failed to parse JSON tool call: {}", e.getMessage());
         }
         return null;
     }
 
-    // ========== Inner Classes ==========
+    private String extractBalancedJson(String s, int start) {
+        int depth = 0;
+        boolean inString = false;
+        char stringChar = 0;
+        for (int i = start; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (inString) {
+                if (c == '\\' && i + 1 < s.length()) { i++; continue; }
+                if (c == stringChar) inString = false;
+            } else {
+                if (c == '"' || c == '\'') { inString = true; stringChar = c; }
+                else if (c == '{') depth++;
+                else if (c == '}') { depth--; if (depth == 0) return s.substring(start, i + 1); }
+            }
+        }
+        return s.substring(start);
+    }
 
-    /**
-     * Parsed tool call from text response (fallback path).
-     */
+    private Object jsonNodeToValue(JsonNode val) {
+        if (val == null || val.isNull()) return null;
+        if (val.isInt()) return val.asInt();
+        if (val.isLong()) return val.asLong();
+        if (val.isDouble() || val.isFloat()) return val.asDouble();
+        if (val.isBoolean()) return val.asBoolean();
+        if (val.isArray() || val.isObject()) return val.toString();
+        return val.asText();
+    }
+
+    private Map<String, Object> parseJsonArgs(String argsJson) {
+        Map<String, Object> args = new HashMap<>();
+        if (argsJson == null || argsJson.isBlank()) return args;
+        try {
+            JsonNode argsNode = objectMapper.readTree(argsJson);
+            if (argsNode.isObject()) {
+                argsNode.fields().forEachRemaining(entry -> {
+                    args.put(entry.getKey(), jsonNodeToValue(entry.getValue()));
+                });
+            }
+        } catch (Exception e) {
+            args.putAll(parseSimpleArgs(argsJson));
+        }
+        return args;
+    }
+
+    private boolean isNoArgTool(String toolName) {
+        return toolName.equals("list_services") || toolName.equals("check_cpu")
+                || toolName.equals("check_memory") || toolName.equals("check_disk");
+    }
+
+    private Map<String, Object> parseSimpleArgs(String argsStr) {
+        Map<String, Object> args = new HashMap<>();
+        if (argsStr == null || argsStr.trim().isEmpty()) return args;
+
+        argsStr = argsStr.trim();
+
+        if (argsStr.startsWith("{") && argsStr.endsWith("}")) {
+            try {
+                JsonNode node = objectMapper.readTree(argsStr);
+                if (node.isObject()) {
+                    node.fields().forEachRemaining(e -> {
+                        JsonNode v = e.getValue();
+                        if (v.isInt() || v.isLong()) args.put(e.getKey(), v.asInt());
+                        else if (v.isBoolean()) args.put(e.getKey(), v.asBoolean());
+                        else if (v.isDouble() || v.isFloat()) args.put(e.getKey(), v.asDouble());
+                        else args.put(e.getKey(), v.asText());
+                    });
+                    return args;
+                }
+            } catch (Exception ignored) {}
+        }
+
+        Matcher m = Pattern.compile(
+                "(\\w+)\\s*[=:]\\s*\"([^\"]*)\"|(\\w+)\\s*[=:]\\s*'([^']*)'|(\\w+)\\s*[=:]\\s*(\\d+)"
+        ).matcher(argsStr);
+        while (m.find()) {
+            if (m.group(1) != null) {
+                args.put(m.group(1), m.group(2));
+            } else if (m.group(3) != null) {
+                args.put(m.group(3), m.group(4));
+            } else if (m.group(5) != null) {
+                args.put(m.group(5), Integer.parseInt(m.group(6)));
+            }
+        }
+
+        if (args.isEmpty() && !argsStr.startsWith("{")) {
+            String trimmed = argsStr.trim().replaceAll("^[\"']|[\"']$", "");
+            if (trimmed.matches("^\\d+$")) {
+                args.put("port", Integer.parseInt(trimmed));
+            } else if (trimmed.matches("^[a-zA-Z0-9_/.-]+$") && !trimmed.isEmpty()) {
+                args.put("path", trimmed);
+                args.put("command", trimmed);
+                args.put("filePath", trimmed);
+                args.put("logPath", trimmed);
+            }
+        }
+
+        return args;
+    }
+
     private static class ParsedToolCall {
         final String toolName;
         final Map<String, Object> args;

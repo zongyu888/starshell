@@ -49,7 +49,7 @@ public class ToolRegistry {
                     String sshKey = ctx.getSshKey();
                     // 优先在可见终端执行：用户能看到 AI 实时输入命令和输出，体验"高大上"
                     try {
-                        String visibleResult = TerminalCommandBridge.getInstance().execute(sshKey, command, 60000);
+                        String visibleResult = TerminalCommandBridge.getInstance().execute(sshKey, command, 300000);
                         // 若可见终端返回"no visible terminal"或"disconnected"类错误，回退到后台 SSH 执行
                         if (visibleResult != null
                                 && !visibleResult.startsWith("Error: no visible terminal")
@@ -80,7 +80,7 @@ public class ToolRegistry {
                         return "Error: No command provided";
                     }
                     try {
-                        return TerminalCommandBridge.getInstance().execute(ctx.getSshKey(), command, 60000);
+                        return TerminalCommandBridge.getInstance().execute(ctx.getSshKey(), command, 300000);
                     } catch (Exception e) {
                         return "Error executing command in terminal: " + e.getMessage();
                     }
@@ -427,7 +427,7 @@ public class ToolRegistry {
     private String executeViaVisibleTerminal(String sshKey, String command) {
         // 优先可见终端
         try {
-            String visibleResult = TerminalCommandBridge.getInstance().execute(sshKey, command, 60000);
+            String visibleResult = TerminalCommandBridge.getInstance().execute(sshKey, command, 300000);
             if (visibleResult != null
                     && !visibleResult.startsWith("Error: no visible terminal")
                     && !visibleResult.startsWith("Error: terminal disconnected")
@@ -461,16 +461,37 @@ public class ToolRegistry {
      */
     public String generateToolsPrompt() {
         StringBuilder sb = new StringBuilder();
-        sb.append("You have access to the following tools. Use them when needed:\n\n");
+        sb.append("You have access to the following tools to help the user manage their server. ");
+        sb.append("When you need to perform an action (run a command, upload a file, check status, etc.), ");
+        sb.append("you MUST call the appropriate tool using the exact format specified below.\n\n");
+        sb.append("## Available Tools\n\n");
 
         for (ToolDefinition tool : tools.values()) {
-            sb.append(String.format("## %s\n%s\n\n",
+            sb.append(String.format("### %s\n%s\n\n",
                     tool.getName(), tool.getDescription()));
         }
 
-        sb.append("To use a tool, respond with a JSON object:\n");
-        sb.append("```json\n{\"tool\": \"tool_name\", \"args\": {\"param\": \"value\"}}\n```\n");
-        sb.append("After receiving tool results, continue your analysis with the information provided.");
+        sb.append("## How to Call Tools\n\n");
+        sb.append("To call a tool, wrap it in <tool_call> tags using this EXACT format:\n\n");
+        sb.append("<tool_call>tool_name({\"param1\": \"value1\", \"param2\": \"value2\"})</tool_call>\n\n");
+        sb.append("Rules:\n");
+        sb.append("- ALWAYS use <tool_call>...</tool_call> tags around every tool call\n");
+        sb.append("- Parameters must be valid JSON object: {\"key\": value}\n");
+        sb.append("- You can call MULTIPLE tools in sequence by putting them one after another:\n");
+        sb.append("  <tool_call>execute_shell({\"command\": \"mkdir -p /tmp\"})</tool_call>\n");
+        sb.append("  <tool_call>check_port({\"port\": 8080})</tool_call>\n");
+        sb.append("- Wait for tool results before deciding your next action\n");
+        sb.append("- After receiving tool results, continue your analysis or provide a final answer\n");
+        sb.append("- For tools without parameters, use: <tool_call>check_cpu({})</tool_call>\n");
+        sb.append("- NEVER describe what you are about to do and then make the tool call in a later message. ");
+        sb.append("Make the tool call immediately when you decide to use it.\n\n");
+        sb.append("Example workflow:\n");
+        sb.append("User: \"Check disk space and memory usage\"\n");
+        sb.append("You: Let me check the disk and memory status for you.\n");
+        sb.append("<tool_call>check_disk({\"path\": \"/\"})</tool_call>\n");
+        sb.append("<tool_call>check_memory({})</tool_call>\n");
+        sb.append("[System returns tool results]\n");
+        sb.append("You: Based on the results, here is the server status: [final answer]\n");
 
         return sb.toString();
     }

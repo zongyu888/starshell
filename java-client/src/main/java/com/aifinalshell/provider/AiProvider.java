@@ -4,25 +4,12 @@ import com.fasterxml.jackson.databind.JsonNode;
 import java.util.List;
 import java.util.function.Consumer;
 
-/**
- * AI Provider interface - all LLM providers implement this.
- * Supports synchronous chat, streaming (SSE), and native function calling (tool use).
- *
- * Design inspired by opencode-dev's Protocol/Route architecture:
- * - Protocol: OpenAI Chat / Anthropic Messages / Ollama
- * - Auth: bearer token / header injection
- * - Framing: SSE stream parsing
- */
 public interface AiProvider {
     String getName();
     List<ModelInfo> listModels(String apiKey, String baseUrl);
     String chat(String model, List<ChatMessage> messages, String apiKey, String baseUrl, double temperature, int maxTokens);
     boolean isAvailable(String apiKey);
 
-    /**
-     * Streaming chat with real-time token callback.
-     * Default implementation falls back to synchronous call.
-     */
     default void chatStream(String model, List<ChatMessage> messages, String apiKey,
                             String baseUrl, double temperature, int maxTokens,
                             Consumer<String> onToken, Runnable onComplete,
@@ -36,24 +23,41 @@ public interface AiProvider {
         }
     }
 
-    /**
-     * Chat with tool/function calling support.
-     * Returns a ChatResult containing both text response and any tool calls.
-     * Default implementation falls back to text-based tool parsing.
-     *
-     * @param tools JSON array of tool definitions (OpenAI format)
-     */
     default ChatResult chatWithTools(String model, List<ChatMessage> messages,
                                       JsonNode tools, String apiKey, String baseUrl,
                                       double temperature, int maxTokens) {
-        // Default: fall back to regular chat (no native function calling)
         String response = chat(model, messages, apiKey, baseUrl, temperature, maxTokens);
         return new ChatResult(response, null);
     }
 
     /**
-     * Check if this provider supports native function calling.
+     * Streaming version of chatWithTools.
+     * Accumulates content tokens (streamed via onToken for real-time display) and
+     * incremental tool_calls, then calls onComplete with the assembled ChatResult.
+     *
+     * Default implementation falls back to synchronous chatWithTools.
+     *
+     * @param onToken    called for each content token as it arrives (for UI streaming)
+     * @param onComplete called with the final ChatResult (content + tool calls) when done
+     * @param onError    called on error
      */
+    default void chatWithToolsStream(String model, List<ChatMessage> messages,
+                                      JsonNode tools, String apiKey, String baseUrl,
+                                      double temperature, int maxTokens,
+                                      Consumer<String> onToken,
+                                      Consumer<ChatResult> onComplete,
+                                      Consumer<Exception> onError) {
+        try {
+            ChatResult result = chatWithTools(model, messages, tools, apiKey, baseUrl, temperature, maxTokens);
+            if (result.getContent() != null && onToken != null) {
+                onToken.accept(result.getContent());
+            }
+            onComplete.accept(result);
+        } catch (Exception e) {
+            onError.accept(e);
+        }
+    }
+
     default boolean supportsFunctionCalling() {
         return false;
     }

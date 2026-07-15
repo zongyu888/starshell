@@ -77,8 +77,14 @@ public class ChatMessage {
         var node = mapper.createObjectNode();
         node.put("role", role);
 
-        if (content != null) {
-            node.put("content", content);
+        if (toolCalls != null && !toolCalls.isEmpty()) {
+            if (content != null) {
+                node.put("content", content);
+            } else {
+                node.putNull("content");
+            }
+        } else {
+            node.put("content", content != null ? content : "");
         }
 
         if (toolCalls != null && !toolCalls.isEmpty()) {
@@ -89,7 +95,7 @@ public class ChatMessage {
                 callNode.put("type", "function");
                 var fnNode = mapper.createObjectNode();
                 fnNode.put("name", tc.getName());
-                fnNode.put("arguments", tc.getArguments());
+                fnNode.put("arguments", tc.getArguments() != null ? tc.getArguments() : "{}");
                 callNode.set("function", fnNode);
                 callsNode.add(callNode);
             }
