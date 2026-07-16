@@ -61,7 +61,8 @@ public class ToolAgent {
                 || trimmed.startsWith("Error: Unknown tool")
                 || trimmed.startsWith("Error: Missing required parameter")
                 || trimmed.contains("AUTH_FAILED")
-                || trimmed.contains("SSH session is not connected");
+                || trimmed.contains("SSH session is not connected")
+                || trimmed.matches("(?s).*\\[exit code: (?!0\\])\\d+\\].*");
     }
 
     private String forceFinalAnswer(AiProvider provider, String model,
@@ -119,20 +120,21 @@ public class ToolAgent {
         return executeInternal(userMessage, systemPrompt, context, null, askCallback, history, null);
     }
 
-    public void executeStream(String userMessage, String systemPrompt, ToolContext context,
+    public Thread executeStream(String userMessage, String systemPrompt, ToolContext context,
                                Consumer<String> onToken, Runnable onComplete,
                                Consumer<Exception> onError) {
-        executeStream(userMessage, systemPrompt, context, onToken, onComplete, onError, null, null, null);
+        return executeStream(userMessage, systemPrompt, context, onToken, onComplete, onError, null, null, null);
     }
 
-    public void executeStream(String userMessage, String systemPrompt, ToolContext context,
+    public Thread executeStream(String userMessage, String systemPrompt, ToolContext context,
                                Consumer<String> onToken, Runnable onComplete,
                                Consumer<Exception> onError,
                                Consumer<ToolPermission.PermissionRequest> askCallback) {
-        executeStream(userMessage, systemPrompt, context, onToken, onComplete, onError, askCallback, null, null);
+        return executeStream(userMessage, systemPrompt, context, onToken, onComplete, onError, askCallback, null, null);
     }
 
-    public void executeStream(String userMessage, String systemPrompt, ToolContext context,
+    /** 启动可取消的流式 Agent 任务并返回真正执行模型/工具调用的工作线程。 */
+    public Thread executeStream(String userMessage, String systemPrompt, ToolContext context,
                                Consumer<String> onToken, Runnable onComplete,
                                Consumer<Exception> onError,
                                Consumer<ToolPermission.PermissionRequest> askCallback,
@@ -141,7 +143,11 @@ public class ToolAgent {
         Thread thread = new Thread(() -> {
             try {
                 executeInternal(userMessage, systemPrompt, context, onToken, askCallback, history, onPersistedText);
-                onComplete.run();
+                if (!Thread.currentThread().isInterrupted()) {
+                    onComplete.run();
+                }
+            } catch (java.util.concurrent.CancellationException e) {
+                logger.debug("ToolAgent stream cancelled");
             } catch (Exception e) {
                 logger.error("Streaming execution failed", e);
                 onError.accept(e);
@@ -149,6 +155,22 @@ public class ToolAgent {
         }, "ToolAgent-Stream");
         thread.setDaemon(true);
         thread.start();
+        return thread;
+    }
+
+    private static void throwIfCancelled() {
+        if (Thread.currentThread().isInterrupted()) {
+            throw new java.util.concurrent.CancellationException("AI generation cancelled");
+        }
+    }
+
+    private static void rethrowIfCancelled(Exception e) {
+        if (e instanceof InterruptedException
+                || e instanceof java.util.concurrent.CancellationException
+                || Thread.currentThread().isInterrupted()) {
+            Thread.currentThread().interrupt();
+            throw new java.util.concurrent.CancellationException("AI generation cancelled");
+        }
     }
 
     private String executeInternal(String userMessage, String systemPrompt, ToolContext context,
@@ -156,6 +178,7 @@ public class ToolAgent {
                                     Consumer<ToolPermission.PermissionRequest> askCallback,
                                     List<ChatMessage> history,
                                     Consumer<String> onPersistedText) {
+        throwIfCancelled();
         AiConfigManager config = AiConfigManager.getInstance();
         String providerName = config.getActiveProvider();
         String model = config.getActiveModel();
@@ -209,6 +232,7 @@ public class ToolAgent {
         List<String> recentErrors = new ArrayList<>();
 
         for (int step = 0; step < maxSteps; step++) {
+            throwIfCancelled();
             try {
                 if (step == maxSteps - 1) {
                     messages.add(ChatMessage.user(buildMaxStepsPrompt(maxSteps)));
@@ -248,6 +272,7 @@ public class ToolAgent {
 
                             String toolResult = executeToolWithPermission(
                                     tc.toolName, tc.args, context, askCallback);
+                            throwIfCancelled();
 
                             toolResultsSummary.append("Tool '").append(tc.toolName).append("' returned:\n")
                                     .append(toolResult).append("\n\n");
@@ -315,6 +340,7 @@ public class ToolAgent {
 
                     String toolResult = executeToolWithPermission(
                             toolName, args, context, askCallback);
+                    throwIfCancelled();
 
                     messages.add(ChatMessage.tool(toolCall.getId(), toolName, toolResult));
 
@@ -346,6 +372,7 @@ public class ToolAgent {
                 }
 
             } catch (Exception e) {
+                rethrowIfCancelled(e);
                 logger.error("Function calling step {} failed", step, e);
                 String error = "Error during tool execution: " + e.getMessage();
                 if (onToken != null) onToken.accept("\n❌ " + error + "\n");
@@ -387,6 +414,7 @@ public class ToolAgent {
         List<String> recentErrors = new ArrayList<>();
 
         for (int step = 0; step < maxSteps; step++) {
+            throwIfCancelled();
             try {
                 if (step == maxSteps - 1) {
                     messages.add(ChatMessage.user(buildMaxStepsPrompt(maxSteps)));
@@ -396,8 +424,10 @@ public class ToolAgent {
                     onToken.accept("\n\n🤔 ");
                 }
 
+                // 文本工具协议必须先缓冲再解析：避免把 <tool_call> 泄漏到聊天区，
+                // 也避免无工具回复在 provider 流式回调后又被 streamText 重复渲染。
                 String response = callStream(provider, model, messages, apiKey, baseUrl,
-                        temperature, maxTokens, onToken);
+                        temperature, maxTokens, null);
 
                 if (response == null) {
                     String err = "Error: AI request failed (no response)";
@@ -424,6 +454,11 @@ public class ToolAgent {
 
                 messages.add(ChatMessage.assistant(response));
 
+                String narrative = stripToolCallMarkup(response).trim();
+                if (onToken != null && !narrative.isEmpty()) {
+                    streamText(narrative + "\n", onToken);
+                }
+
                 StringBuilder toolResultsSummary = new StringBuilder();
                 for (ParsedToolCall tc : toolCalls) {
                     if (onToken != null) {
@@ -435,6 +470,7 @@ public class ToolAgent {
 
                     String toolResult = executeToolWithPermission(
                             tc.toolName, tc.args, context, askCallback);
+                    throwIfCancelled();
 
                     toolResultsSummary.append("Tool '").append(tc.toolName).append("' returned:\n")
                             .append(toolResult).append("\n\n");
@@ -473,6 +509,7 @@ public class ToolAgent {
                                 + "or provide a final answer to the user."));
 
             } catch (Exception e) {
+                rethrowIfCancelled(e);
                 logger.error("Text parsing step {} failed", step, e);
                 String error = "Error during tool execution: " + e.getMessage();
                 if (onToken != null) onToken.accept("\n❌ " + error + "\n");
@@ -492,13 +529,15 @@ public class ToolAgent {
                                             String apiKey, String baseUrl,
                                             double temperature, int maxTokens,
                                             Consumer<String> onToken) throws Exception {
+        throwIfCancelled();
         CountDownLatch latch = new CountDownLatch(1);
         AtomicReference<ChatResult> resultRef = new AtomicReference<>();
         AtomicReference<Exception> errorRef = new AtomicReference<>();
+        Thread ownerThread = Thread.currentThread();
 
         provider.chatWithToolsStream(model, messages, tools, apiKey, baseUrl, temperature, maxTokens,
                 token -> {
-                    if (onToken != null) onToken.accept(token);
+                    if (!ownerThread.isInterrupted() && onToken != null) onToken.accept(token);
                 },
                 result -> {
                     resultRef.set(result);
@@ -524,14 +563,16 @@ public class ToolAgent {
                                String apiKey, String baseUrl,
                                double temperature, int maxTokens,
                                Consumer<String> onToken) throws Exception {
+        throwIfCancelled();
         CountDownLatch latch = new CountDownLatch(1);
         StringBuilder sb = new StringBuilder();
         AtomicReference<Exception> errorRef = new AtomicReference<>();
+        Thread ownerThread = Thread.currentThread();
 
         provider.chatStream(model, messages, apiKey, baseUrl, temperature, maxTokens,
                 token -> {
                     sb.append(token);
-                    if (onToken != null) onToken.accept(token);
+                    if (!ownerThread.isInterrupted() && onToken != null) onToken.accept(token);
                 },
                 () -> latch.countDown(),
                 error -> {
@@ -552,12 +593,16 @@ public class ToolAgent {
     private String executeToolWithPermission(String toolName, Map<String, Object> args,
                                               ToolContext context,
                                               Consumer<ToolPermission.PermissionRequest> askCallback) {
+        throwIfCancelled();
         boolean allowed;
         if (askCallback != null) {
             allowed = ToolPermission.checkWithCallback(toolName, args, askCallback);
         } else {
             ToolPermission.PermissionResult perm = ToolPermission.check(toolName, args);
-            allowed = (perm != ToolPermission.PermissionResult.BLOCK);
+            // Without a UI confirmation callback an ASK decision cannot be
+            // satisfied safely.  Fail closed instead of silently treating it as
+            // approval (the main JavaFX chat path always supplies the callback).
+            allowed = (perm == ToolPermission.PermissionResult.ALLOW);
         }
 
         if (!allowed) {
@@ -601,8 +646,11 @@ public class ToolAgent {
         }
 
         try {
-            return tool.getExecutor().execute(args, context);
+            String result = tool.getExecutor().execute(args, context);
+            throwIfCancelled();
+            return result;
         } catch (Exception e) {
+            rethrowIfCancelled(e);
             logger.error("Tool execution failed: {}", toolName, e);
             return "Error executing tool '" + toolName + "': " + e.getMessage();
         }
@@ -663,6 +711,25 @@ public class ToolAgent {
         calls.addAll(parseBareToolCalls(response, calls));
 
         return calls;
+    }
+
+    /** 移除文本模型输出中的内部工具调用协议，只保留用户可读的说明文字。 */
+    private String stripToolCallMarkup(String response) {
+        if (response == null || response.isEmpty()) return "";
+        String cleaned = TOOL_CALL_CLOSED.matcher(response).replaceAll("");
+        cleaned = TOOL_CALL_OPEN.matcher(cleaned).replaceAll("");
+        cleaned = TOOL_CALL_SIMPLE_CLOSED.matcher(cleaned).replaceAll("");
+        cleaned = TOOL_CALL_SIMPLE_OPEN.matcher(cleaned).replaceAll("");
+        if (parseJsonToolCall(response) != null) {
+            int start = cleaned.indexOf('{');
+            if (start >= 0) {
+                String json = extractBalancedJson(cleaned, start);
+                cleaned = cleaned.substring(0, start)
+                        + cleaned.substring(Math.min(cleaned.length(), start + json.length()));
+            }
+            cleaned = cleaned.replace("```json", "").replace("```JSON", "").replace("```", "");
+        }
+        return cleaned;
     }
 
     private static final Pattern TOOL_CALL_CLOSED = Pattern.compile(

@@ -154,20 +154,29 @@ public class ApiKeyManager {
      */
     private ArrayNode getApiKeysArray(String provider, boolean create) {
         ObjectNode root = getRootConfig();
-        ObjectNode ai = (ObjectNode) root.path("ai");
-        if (ai.isMissingNode()) {
+        JsonNode aiNode = root.get("ai");
+        ObjectNode ai;
+        if (aiNode instanceof ObjectNode existingAi) {
+            ai = existingAi;
+        } else {
             if (!create) return null;
             ai = objectMapper.createObjectNode();
             root.set("ai", ai);
         }
-        ObjectNode providers = (ObjectNode) ai.path("providers");
-        if (providers.isMissingNode()) {
+        JsonNode providersNode = ai.get("providers");
+        ObjectNode providers;
+        if (providersNode instanceof ObjectNode existingProviders) {
+            providers = existingProviders;
+        } else {
             if (!create) return null;
             providers = objectMapper.createObjectNode();
             ai.set("providers", providers);
         }
-        ObjectNode p = (ObjectNode) providers.path(provider);
-        if (p.isMissingNode()) {
+        JsonNode providerNode = providers.get(provider);
+        ObjectNode p;
+        if (providerNode instanceof ObjectNode existingProvider) {
+            p = existingProvider;
+        } else {
             if (!create) return null;
             p = objectMapper.createObjectNode();
             providers.set(provider, p);

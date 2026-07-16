@@ -3,6 +3,7 @@ package com.aifinalshell.controller;
 import com.aifinalshell.config.AiConfigManager;
 import com.aifinalshell.config.ApiKeyManager;
 import com.aifinalshell.provider.AiProvider;
+import com.aifinalshell.provider.ChatMessage;
 import com.aifinalshell.provider.ModelCache;
 import com.aifinalshell.provider.ModelFilter;
 import com.aifinalshell.provider.ModelFilter.FilterType;
@@ -17,6 +18,7 @@ import javafx.stage.Modality;
 import javafx.stage.Stage;
 
 import java.util.*;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * AI Settings dialog for model selection, API key management, and configuration.
@@ -36,6 +38,11 @@ public class AiSettingsDialog extends Stage {
     private CheckBox freeOnlyCheck;
     private CheckBox supportsToolsCheck;
     private CheckBox supportsVisionCheck;
+    private final AtomicLong modelLoadVersion = new AtomicLong();
+    private volatile boolean modelListUpdating;
+    /** Provider/model choices remain local until Save; Cancel must be side-effect free. */
+    private final Map<String, String> draftModels = new HashMap<>();
+    private String draftProvider;
 
     public AiSettingsDialog(Stage owner) {
         initOwner(owner);
@@ -46,6 +53,8 @@ public class AiSettingsDialog extends Stage {
         root.setPadding(new Insets(15));
 
         AiConfigManager config = AiConfigManager.getInstance();
+        draftProvider = config.getActiveProvider();
+        draftModels.put(draftProvider, config.getActiveModel());
 
         // === Provider选择 ===
         HBox providerBox = new HBox(10);
@@ -56,8 +65,10 @@ public class AiSettingsDialog extends Stage {
         providerCombo.getItems().addAll(ProviderRegistry.getInstance().getProviderNames());
         providerCombo.setValue(config.getActiveProvider());
         providerCombo.setOnAction(e -> {
+            rememberCurrentModelSelection();
             String provider = providerCombo.getValue();
-            config.setActiveProvider(provider);
+            if (provider == null || provider.isBlank()) return;
+            draftProvider = provider;
             // 更新API密钥字段和Base URL
             setApiKeyText(config.getApiKey(provider));
             baseUrlField.setText(config.getBaseUrl(provider));
@@ -105,10 +116,10 @@ public class AiSettingsDialog extends Stage {
         modelCombo.setPrefWidth(300);
         refreshModels(config.getActiveProvider());
         modelCombo.setOnAction(e -> {
-            if (modelCombo.getValue() != null) {
-                // Save the actual model ID, not the display label
+            if (!modelListUpdating && modelCombo.getValue() != null) {
+                // Keep the actual model ID in the dialog draft only. Save commits it.
                 String modelId = modelIdMap.getOrDefault(modelCombo.getValue(), modelCombo.getValue());
-                config.setActiveModel(modelId);
+                draftModels.put(draftProvider, modelId);
             }
         });
         modelBox.getChildren().addAll(modelLabel, modelCombo);
@@ -206,6 +217,11 @@ public class AiSettingsDialog extends Stage {
             String baseUrl = baseUrlField.getText();
             String model = modelIdMap.getOrDefault(modelCombo.getValue(), modelCombo.getValue());
 
+            if (provider == null || provider.isBlank() || model == null || model.isBlank()) {
+                showError("请选择 Provider 和 Model 后再测试连接");
+                return;
+            }
+
             // custom provider 走真实连通性测试（isAvailable 只是桩函数）
             if ("custom".equalsIgnoreCase(provider)) {
                 testBtn.setDisable(true);
@@ -235,31 +251,58 @@ public class AiSettingsDialog extends Stage {
             }
 
             AiProvider p = ProviderRegistry.getInstance().getProvider(provider);
-            if (p != null && p.isAvailable(apiKey)) {
-                showInfo("Connection test passed for " + provider);
-                // 验证成功，标记密钥有效
-                if (apiKey != null && !apiKey.isEmpty()) {
-                    ApiKeyManager.getInstance().markKeyValid(provider, apiKey);
-                    refreshKeyList(provider);
-                }
-            } else {
-                showError("Connection test failed for " + provider);
-                // 验证失败，标记密钥失败
-                if (apiKey != null && !apiKey.isEmpty()) {
-                    ApiKeyManager.getInstance().markKeyFailed(provider, apiKey);
-                    refreshKeyList(provider);
-                }
+            if (p == null) {
+                showError("Unknown provider: " + provider);
+                return;
             }
+
+            // A real, tiny chat request verifies URL, credentials and selected
+            // model together. Run it off the FX thread so slow networks never
+            // freeze the settings window.
+            testBtn.setDisable(true);
+            new Thread(() -> {
+                String response;
+                try {
+                    response = p.chat(model, List.of(ChatMessage.user("Reply with OK.")),
+                            apiKey, baseUrl, 0.0, 8);
+                } catch (Exception ex) {
+                    response = "Error: " + ex.getMessage();
+                }
+                String finalResponse = response == null ? "" : response.trim();
+                boolean success = !finalResponse.isEmpty()
+                        && !finalResponse.regionMatches(true, 0, "Error", 0, 5)
+                        && !finalResponse.regionMatches(true, 0, "API Error", 0, 9)
+                        && !finalResponse.regionMatches(true, 0, "No response", 0, 11);
+                javafx.application.Platform.runLater(() -> {
+                    testBtn.setDisable(false);
+                    if (apiKey != null && !apiKey.isEmpty()) {
+                        if (success) ApiKeyManager.getInstance().markKeyValid(provider, apiKey);
+                        else ApiKeyManager.getInstance().markKeyFailed(provider, apiKey);
+                        refreshKeyList(provider);
+                    }
+                    if (success) showInfo("Connection test passed for " + provider);
+                    else showError("Connection test failed for " + provider
+                            + (finalResponse.isEmpty() ? "" : "\n" + finalResponse));
+                });
+            }, "AI-Settings-Connection-Test").start();
         });
 
         Button saveBtn = new Button("Save");
         saveBtn.setOnAction(e -> {
-            config.setActiveProvider(providerCombo.getValue());
-            // Save actual model ID from the display label
-            String displayLabel = modelCombo.getValue();
-            String modelId = modelIdMap.getOrDefault(displayLabel, displayLabel);
-            config.setActiveModel(modelId);
+            rememberCurrentModelSelection();
             String currentProvider = providerCombo.getValue();
+            if (currentProvider == null || currentProvider.isBlank()) {
+                showError("请选择 Provider");
+                return;
+            }
+            config.setActiveProvider(currentProvider);
+            // Save actual model ID from the display label
+            String modelId = draftModels.get(currentProvider);
+            if (modelId == null || modelId.isBlank()) {
+                showError("请选择 Model");
+                return;
+            }
+            config.setActiveModel(modelId);
 
             // Save API key
             String apiKey = getApiKeyText();
@@ -353,50 +396,82 @@ public class AiSettingsDialog extends Stage {
      * 刷新模型列表 - 使用ModelCache缓存 + ModelFilter过滤
      */
     private void refreshModels(String provider) {
-        modelCombo.getItems().clear();
-        modelIdMap.clear();
+        long requestVersion = modelLoadVersion.incrementAndGet();
         AiConfigManager config = AiConfigManager.getInstance();
         AiProvider p = ProviderRegistry.getInstance().getProvider(provider);
-        if (p != null) {
-            // 使用ModelCache缓存模型列表，避免频繁请求API
-            List<ModelInfo> models = ModelCache.getInstance().getModels(provider,
-                    () -> p.listModels(config.getApiKey(provider), config.getBaseUrl(provider)));
+        if (p == null) return;
 
-            // 使用ModelFilter按免费/能力过滤
-            Set<FilterType> filters = new HashSet<>();
-            if (freeOnlyCheck.isSelected()) filters.add(FilterType.FREE_ONLY);
-            if (supportsToolsCheck.isSelected()) filters.add(FilterType.SUPPORTS_TOOLS);
-            if (supportsVisionCheck.isSelected()) filters.add(FilterType.SUPPORTS_VISION);
-            models = ModelFilter.filter(models, filters);
+        String apiKey = config.getApiKey(provider);
+        String baseUrl = config.getBaseUrl(provider);
+        String activeModel = draftModels.get(provider);
+        List<String> savedCustomModels = new ArrayList<>(config.getCustomModels(provider));
+        Set<FilterType> filters = new HashSet<>();
+        if (freeOnlyCheck.isSelected()) filters.add(FilterType.FREE_ONLY);
+        if (supportsToolsCheck.isSelected()) filters.add(FilterType.SUPPORTS_TOOLS);
+        if (supportsVisionCheck.isSelected()) filters.add(FilterType.SUPPORTS_VISION);
 
-            for (ModelInfo m : models) {
-                String label = m.isFree() ? "★ " + m.getName() + " (Free)" : m.getName();
-                modelCombo.getItems().add(label);
-                // Store the actual model ID for later retrieval
-                modelIdMap.put(label, m.getId());
+        modelListUpdating = true;
+        modelCombo.setDisable(true);
+        modelCombo.setPromptText("正在加载模型…");
+
+        Thread loader = new Thread(() -> {
+            List<ModelInfo> models;
+            try {
+                models = ModelCache.getInstance().getModels(provider,
+                        () -> p.listModels(apiKey, baseUrl));
+                models = ModelFilter.filter(models, filters);
+            } catch (Exception e) {
+                models = new ArrayList<>();
             }
+            List<ModelInfo> loaded = new ArrayList<>(models);
+            javafx.application.Platform.runLater(() -> {
+                if (requestVersion != modelLoadVersion.get()) return;
+                modelCombo.getItems().clear();
+                modelIdMap.clear();
+                for (ModelInfo m : loaded) {
+                    String label = m.isFree() ? "★ " + m.getName() + " (Free)" : m.getName();
+                    modelCombo.getItems().add(label);
+                    modelIdMap.put(label, m.getId());
+                }
 
-            // custom provider：合并手动保存的自定义模型（/models 端点可能不可用或不返回该模型）
-            if ("custom".equalsIgnoreCase(provider)) {
-                for (String savedModel : config.getCustomModels(provider)) {
-                    if (!modelIdMap.containsValue(savedModel) && !modelCombo.getItems().contains(savedModel)) {
-                        modelCombo.getItems().add(savedModel);
-                        modelIdMap.put(savedModel, savedModel);
+                if ("custom".equalsIgnoreCase(provider)) {
+                    for (String savedModel : savedCustomModels) {
+                        if (!modelIdMap.containsValue(savedModel)) {
+                            modelCombo.getItems().add(savedModel);
+                            modelIdMap.put(savedModel, savedModel);
+                        }
                     }
                 }
-            }
-        }
-        // Set the current model by finding its display label
-        String activeModel = config.getActiveModel();
-        if (activeModel != null) {
-            for (Map.Entry<String, String> entry : modelIdMap.entrySet()) {
-                if (entry.getValue().equals(activeModel)) {
-                    modelCombo.setValue(entry.getKey());
-                    return;
+
+                boolean selected = false;
+                if (activeModel != null) {
+                    for (Map.Entry<String, String> entry : modelIdMap.entrySet()) {
+                        if (entry.getValue().equals(activeModel)) {
+                            modelCombo.setValue(entry.getKey());
+                            selected = true;
+                            break;
+                        }
+                    }
                 }
-            }
-        }
-        modelCombo.setValue(config.getActiveModel());
+                if (!selected && activeModel != null && !activeModel.isEmpty()) {
+                    modelCombo.getItems().add(activeModel);
+                    modelIdMap.put(activeModel, activeModel);
+                    modelCombo.setValue(activeModel);
+                }
+                modelCombo.setDisable(false);
+                modelCombo.setPromptText("选择模型");
+                modelListUpdating = false;
+            });
+        }, "AI-Settings-Model-Loader");
+        loader.setDaemon(true);
+        loader.start();
+    }
+
+    /** Remember the currently visible model without touching persisted AI configuration. */
+    private void rememberCurrentModelSelection() {
+        if (draftProvider == null || modelCombo == null || modelCombo.getValue() == null) return;
+        String label = modelCombo.getValue();
+        draftModels.put(draftProvider, modelIdMap.getOrDefault(label, label));
     }
 
     /**

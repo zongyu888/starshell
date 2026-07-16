@@ -105,16 +105,25 @@ public class ToolPermission {
      * Returns the permission result without blocking.
      */
     public static PermissionResult check(String toolName, Map<String, Object> args) {
-        // Check "always allow" cache first
-        if (isAlwaysAllowed(toolName, args)) {
-            return PermissionResult.ALLOW;
-        }
-
-        if ("execute_shell".equals(toolName)) {
-            return checkShellCommand(args);
+        // A remembered approval must never override a hard safety block.  This is
+        // especially important for shell-prefix approvals (for example, allowing
+        // one benign `rm` invocation must not permit `rm -rf /`) and service-action
+        // approvals (allowing "stop nginx" must not permit "stop sshd").
+        if (isShellTool(toolName)) {
+            PermissionResult result = checkShellCommand(args);
+            if (result == PermissionResult.BLOCK) return result;
+            return isAlwaysAllowed(toolName, args) ? PermissionResult.ALLOW : result;
         }
         if ("manage_service".equals(toolName)) {
-            return checkManageService(args);
+            PermissionResult result = checkManageService(args);
+            if (result == PermissionResult.BLOCK) return result;
+            return isAlwaysAllowed(toolName, args) ? PermissionResult.ALLOW : result;
+        }
+
+        // For operations that have no unconditional BLOCK branch, a remembered
+        // user approval can safely short-circuit the confirmation check.
+        if (isAlwaysAllowed(toolName, args)) {
+            return PermissionResult.ALLOW;
         }
         if ("install_package".equals(toolName)) {
             return PermissionResult.ASK;
@@ -158,6 +167,9 @@ public class ToolPermission {
                 try {
                     // B10: 60秒超时，超时按拒绝处理，避免对话框未响应时工具调用永久阻塞 AI 线程
                     return request.getResponse().get(60, java.util.concurrent.TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return false;
                 } catch (Exception e) {
                     return false;
                 }
@@ -290,7 +302,7 @@ public class ToolPermission {
      * - other tools: uses the tool name as the pattern key
      */
     private static String buildPatternKey(String toolName, Map<String, Object> args) {
-        if ("execute_shell".equals(toolName)) {
+        if (isShellTool(toolName)) {
             String command = (String) args.get("command");
             if (command != null && !command.isEmpty()) {
                 String[] parts = command.trim().split("\\s+");
@@ -323,7 +335,7 @@ public class ToolPermission {
      */
     public static String getWarning(String toolName, Map<String, Object> args, PermissionResult result) {
         if (result == PermissionResult.BLOCK) {
-            if ("execute_shell".equals(toolName)) {
+            if (isShellTool(toolName)) {
                 return "BLOCKED: Dangerous command detected!\n" +
                         "Command: " + args.getOrDefault("command", "N/A") + "\n" +
                         (SecurityUtils.getSecurityWarning((String) args.get("command")) != null
@@ -337,7 +349,7 @@ public class ToolPermission {
             return "BLOCKED: This operation is not allowed.";
         }
         if (result == PermissionResult.ASK) {
-            if ("execute_shell".equals(toolName)) {
+            if (isShellTool(toolName)) {
                 String secWarning = SecurityUtils.getSecurityWarning((String) args.get("command"));
                 return "Confirmation required for command:\n" +
                         "Command: " + args.getOrDefault("command", "N/A") + "\n" +
@@ -370,6 +382,10 @@ public class ToolPermission {
             return "Confirmation required for tool: " + toolName;
         }
         return null;
+    }
+
+    private static boolean isShellTool(String toolName) {
+        return "execute_shell".equals(toolName) || "run_in_terminal".equals(toolName);
     }
 
     // ========== PermissionRequest Inner Class ==========

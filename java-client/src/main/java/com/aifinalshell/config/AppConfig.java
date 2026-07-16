@@ -1,16 +1,34 @@
 package com.aifinalshell.config;
 
 import java.io.*;
+import java.util.Objects;
 import java.util.Properties;
 
 public class AppConfig {
     private static AppConfig instance;
     private final Properties properties;
-    private static final String CONFIG_FILE = "config.properties";
+    private final boolean persistent;
+    private final File configFile;
+    private final boolean migrateLegacyWorkingDirectoryConfig;
+    private static final String CONFIG_PATH_PROPERTY = "starshell.app.config";
+    private static final String CONFIG_PATH_ENV = "STARSHELL_APP_CONFIG";
+    private static final String LEGACY_CONFIG_FILE = "config.properties";
 
     private AppConfig() {
-        properties = new Properties();
+        this(new Properties(), true, resolveConfigFile(), !hasExplicitConfigPath());
         loadConfig();
+    }
+
+    private AppConfig(Properties properties, boolean persistent) {
+        this(properties, persistent, null, false);
+    }
+
+    private AppConfig(Properties properties, boolean persistent,
+                      File configFile, boolean migrateLegacyWorkingDirectoryConfig) {
+        this.properties = properties;
+        this.persistent = persistent;
+        this.configFile = configFile;
+        this.migrateLegacyWorkingDirectoryConfig = migrateLegacyWorkingDirectoryConfig;
     }
 
     public static synchronized AppConfig getInstance() {
@@ -21,16 +39,67 @@ public class AppConfig {
     }
 
     private void loadConfig() {
-        File file = new File(CONFIG_FILE);
-        if (file.exists()) {
-            try (FileInputStream fis = new FileInputStream(file)) {
+        File source = configFile;
+        if ((source == null || !source.isFile()) && migrateLegacyWorkingDirectoryConfig) {
+            File legacy = new File(LEGACY_CONFIG_FILE).getAbsoluteFile();
+            if (legacy.isFile()) source = legacy;
+        }
+        if (source != null && source.isFile()) {
+            try (FileInputStream fis = new FileInputStream(source)) {
                 properties.load(fis);
             } catch (IOException e) {
                 System.err.println("加载配置文件失败: " + e.getMessage());
             }
         }
         setDefaults();
+        migrateLegacyValues();
         saveConfig();
+    }
+
+    private static boolean hasExplicitConfigPath() {
+        String property = System.getProperty(CONFIG_PATH_PROPERTY);
+        String env = System.getenv(CONFIG_PATH_ENV);
+        return (property != null && !property.isBlank()) || (env != null && !env.isBlank());
+    }
+
+    private static File resolveConfigFile() {
+        String override = System.getProperty(CONFIG_PATH_PROPERTY);
+        if (override == null || override.isBlank()) override = System.getenv(CONFIG_PATH_ENV);
+        if (override != null && !override.isBlank()) return new File(override).getAbsoluteFile();
+
+        File configDir = new File(System.getProperty("user.home"), ".aifinalshell");
+        return new File(configDir, "app.properties").getAbsoluteFile();
+    }
+
+    private void migrateLegacyValues() {
+        // 旧版本把粘贴与垂直分屏都设为 Ctrl+Shift+V，JavaFX accelerator 会静默覆盖其中一个。
+        if ("Ctrl+Shift+V".equalsIgnoreCase(properties.getProperty("shortcut.paste"))
+                && "Ctrl+Shift+V".equalsIgnoreCase(properties.getProperty("shortcut.split_vertical"))) {
+            properties.setProperty("shortcut.split_vertical", "Ctrl+Alt+V");
+        }
+        if ("Ctrl++".equalsIgnoreCase(properties.getProperty("shortcut.zoom_in"))) {
+            properties.setProperty("shortcut.zoom_in", "Ctrl+Shift+Equals");
+        }
+        migrateBackgroundImageSelection(properties);
+    }
+
+    /**
+     * Older settings dialogs saved the selected image path but forgot to enable
+     * the background-image switch.  Repair that legacy state exactly once when
+     * the path still points to a real file.  The marker ensures a later explicit
+     * user choice to disable the image is never reversed on the next launch.
+     */
+    static void migrateBackgroundImageSelection(Properties values) {
+        String marker = "background.image.auto_enable_migrated";
+        if (Boolean.parseBoolean(values.getProperty(marker, "false"))) return;
+
+        String path = values.getProperty("background.image.path", "").trim();
+        boolean enabled = Boolean.parseBoolean(
+                values.getProperty("background.image.enabled", "false"));
+        if (!enabled && !path.isEmpty() && new File(path).isFile()) {
+            values.setProperty("background.image.enabled", "true");
+        }
+        values.setProperty(marker, "true");
     }
 
     private void setDefaults() {
@@ -81,9 +150,10 @@ public class AppConfig {
         setDefault("shortcut.next_tab", "Ctrl+Tab");
         setDefault("shortcut.prev_tab", "Ctrl+Shift+Tab");
         setDefault("shortcut.split_horizontal", "Ctrl+Shift+H");
-        setDefault("shortcut.split_vertical", "Ctrl+Shift+V");
+        // Ctrl+Shift+V 已用于粘贴，分屏必须使用独立默认键，避免 accelerator 后注册者覆盖前者。
+        setDefault("shortcut.split_vertical", "Ctrl+Alt+V");
         setDefault("shortcut.fullscreen", "F11");
-        setDefault("shortcut.zoom_in", "Ctrl++");
+        setDefault("shortcut.zoom_in", "Ctrl+Shift+Equals");
         setDefault("shortcut.zoom_out", "Ctrl+-");
         setDefault("shortcut.zoom_reset", "Ctrl+0");
 
@@ -114,6 +184,9 @@ public class AppConfig {
         setDefault("background.image.enabled", "false");
         setDefault("background.image.path", "");
         setDefault("background.image.opacity", "0.3");
+        // "contain" keeps the whole image visible; cover remains an explicit option.
+        setDefault("background.image.fit", "contain");
+        setDefault("background.image.auto_enable_migrated", "false");
 
         // ========== Font Settings ==========
         setDefault("font.family", "Cascadia Code");
@@ -128,30 +201,81 @@ public class AppConfig {
         }
     }
 
-    public void saveConfig() {
-        try (FileOutputStream fos = new FileOutputStream(CONFIG_FILE)) {
+    public synchronized void saveConfig() {
+        // Draft 永不直接写盘；只有 applyDraft() 能提交到单例配置。
+        if (!persistent) return;
+        if (configFile == null) return;
+        File parent = configFile.getParentFile();
+        if (parent != null && !parent.isDirectory() && !parent.mkdirs()) {
+            System.err.println("创建配置目录失败: " + parent);
+            return;
+        }
+        try (FileOutputStream fos = new FileOutputStream(configFile)) {
             properties.store(fos, "StarShell Configuration");
         } catch (IOException e) {
             System.err.println("保存配置文件失败: " + e.getMessage());
         }
     }
 
+    /** Absolute stable path used by diagnostics and packaging verification. */
+    public String getConfigPath() {
+        return configFile == null ? "" : configFile.getAbsolutePath();
+    }
+
     /**
      * Task 5.11: 真正重置——清空所有属性后重新填入默认值并落盘。
      * 供 SettingsDialog.resetToDefaults 调用，确保覆盖运行期间被修改的值。
      */
-    public void clearAndReloadDefaults() {
+    public synchronized void clearAndReloadDefaults() {
         properties.clear();
         setDefaults();
         saveConfig();
     }
 
     /**
+     * 创建与当前配置隔离的设置草稿。草稿复用全部类型化 getter/setter，
+     * 但 {@link #saveConfig()} 不会写盘，必须通过 {@link #applyDraft(Draft)} 提交。
+     */
+    public synchronized Draft createDraft() {
+        Properties copy = new Properties();
+        properties.forEach(copy::put);
+        return new Draft(copy);
+    }
+
+    /**
+     * 原子提交一个设置草稿并写盘。提交后草稿仍可继续编辑，再次 Apply 会形成新基线。
+     */
+    public synchronized void applyDraft(Draft draft) {
+        Objects.requireNonNull(draft, "draft");
+        properties.clear();
+        draft.snapshot().forEach(properties::put);
+        setDefaults();
+        saveConfig();
+    }
+
+    /** 返回当前配置的防御性副本，调用方无法绕过 Apply/Cancel 语义修改全局状态。 */
+    public synchronized Properties snapshot() {
+        Properties copy = new Properties();
+        properties.forEach(copy::put);
+        return copy;
+    }
+
+    /**
+     * 设置窗口使用的隔离草稿。clearAndReloadDefaults() 仅重置草稿内存，不会碰配置文件。
+     */
+    public static final class Draft extends AppConfig {
+        Draft(Properties properties) {
+            super(properties, false);
+        }
+    }
+
+    /**
      * Task 5.12: 暴露内部 Properties 对象引用，供 SettingsDialog 在打开时做快照、
      * Cancel 时回滚。返回的是内部引用（非副本），调用方可读可写。
      */
+    @Deprecated
     public Properties getProperties() {
-        return properties;
+        return snapshot();
     }
 
     public String get(String key) {
@@ -251,6 +375,9 @@ public class AppConfig {
     public double getBackgroundImageOpacity() { return getDouble("background.image.opacity", 0.3); }
     public void setBackgroundImageOpacity(double v) { set("background.image.opacity", String.valueOf(v)); }
 
+    public String getBackgroundImageFit() { return get("background.image.fit", "contain"); }
+    public void setBackgroundImageFit(String v) { set("background.image.fit", v); }
+
     // ========== Font ==========
     public String getFontFamily() { return get("font.family", "Cascadia Code"); }
     public void setFontFamily(String v) { set("font.family", v); }
@@ -270,7 +397,7 @@ public class AppConfig {
 
     // ========== Session ==========
     public String getLastSessionId() { return get("session.last_id", ""); }
-    public void setLastSessionId(String v) { set("session.last_id", v == null ? "" : v); }
+    public void setLastSessionId(String v) { setAndSave("session.last_id", v == null ? "" : v); }
 
     // ========== Existing AI/Monitor getters ==========
     public String getAiServiceUrl() { return get("ai.service.url", "http://localhost:8000"); }

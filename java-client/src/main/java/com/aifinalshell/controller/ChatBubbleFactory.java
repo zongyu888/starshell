@@ -13,6 +13,8 @@ import javafx.scene.control.TextArea;
 import javafx.scene.input.Clipboard;
 import javafx.scene.input.ClipboardContent;
 import javafx.scene.layout.HBox;
+import javafx.scene.layout.Priority;
+import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
 import javafx.util.Duration;
 
@@ -28,7 +30,7 @@ import java.util.function.Consumer;
 public class ChatBubbleFactory {
 
     /** 气泡最大宽度 */
-    public static final double MAX_BUBBLE_WIDTH = 380;
+    public static final double MAX_BUBBLE_WIDTH = 404;
 
     /** 节流渲染间隔（毫秒）：120ms 兼顾流式顺滑度与渲染开销 */
     private static final long THROTTLE_MS = 120;
@@ -48,16 +50,23 @@ public class ChatBubbleFactory {
      * @return 用户气泡VBox
      */
     public static VBox createUserBubble(String content) {
-        VBox bubble = new VBox(4);
+        VBox bubble = new VBox(7);
         bubble.setMaxWidth(MAX_BUBBLE_WIDTH);
         bubble.getStyleClass().add("ai-bubble-user");
-        bubble.setPadding(new Insets(10, 14, 10, 14));
+        bubble.setPadding(new Insets(11, 14, 11, 14));
         bubble.setAlignment(Pos.CENTER_RIGHT);
+
+        Label role = new Label("YOU");
+        role.getStyleClass().add("ai-bubble-role-user");
+        HBox roleRow = new HBox(role);
+        roleRow.setAlignment(Pos.CENTER_RIGHT);
+        bubble.getChildren().add(roleRow);
 
         TextArea contentArea = new TextArea(content);
         contentArea.setEditable(false);
         contentArea.setWrapText(true);
         contentArea.setMaxWidth(MAX_BUBBLE_WIDTH - 28);
+        fitMessageArea(contentArea, content, 168);
         // CSS 伪装成蓝色气泡内的白色文字：透明背景/无边框/无内边距，与 Label 视觉一致
         contentArea.getStyleClass().add("ai-bubble-user-text");
         bubble.getChildren().add(contentArea);
@@ -74,17 +83,25 @@ public class ChatBubbleFactory {
      * @return AI气泡VBox
      */
     public static VBox createAssistantBubble(String content, Consumer<String> sendToTerminalCallback) {
-        VBox bubble = new VBox(6);
+        VBox bubble = new VBox(8);
         bubble.setMaxWidth(MAX_BUBBLE_WIDTH);
         bubble.getStyleClass().add("ai-bubble-assistant");
-        bubble.setPadding(new Insets(10, 14, 10, 14));
+        bubble.setPadding(new Insets(12, 14, 11, 14));
         bubble.setAlignment(Pos.CENTER_LEFT);
 
         // Agent标签（index 0）
-        HBox agentTag = new HBox(6, new Label("🤖"), new Label("Agent"));
+        Label avatar = new Label("✦");
+        avatar.getStyleClass().add("ai-agent-avatar");
+        Label agentName = new Label("STARSHELL AGENT");
+        agentName.getStyleClass().add("ai-bubble-role-agent");
+        Region spacer = new Region();
+        HBox.setHgrow(spacer, Priority.ALWAYS);
+        Label liveState = new Label("● LIVE");
+        liveState.getStyleClass().add("ai-bubble-live-state");
+        HBox agentTag = new HBox(7, avatar, agentName, spacer, liveState);
         agentTag.setAlignment(Pos.CENTER_LEFT);
-        agentTag.setStyle("-fx-text-fill: #e5e5e5; -fx-font-size: 11px; -fx-font-weight: bold;");
         bubble.getChildren().add(agentTag);
+        bubble.getProperties().put("liveStateLabel", liveState);
 
         // 内容区域（index 1）
         VBox contentBox = MarkdownRenderer.render(content, sendToTerminalCallback);
@@ -213,6 +230,7 @@ public class ChatBubbleFactory {
         cancelPending(bubble);
         lastRenderTime.remove(bubble);
         replaceContent(bubble, fullText, sendToTerminalCallback);
+        markComplete(bubble);
     }
 
     /**
@@ -241,6 +259,7 @@ public class ChatBubbleFactory {
      */
     public static void addActionButtons(VBox bubble, String fullText, Runnable regenerateCallback) {
         if (bubble == null) return;
+        markComplete(bubble);
         // 避免重复添加（已有 actionBox 时跳过）
         if (bubble.getChildren().size() >= 3) return;
 
@@ -249,7 +268,7 @@ public class ChatBubbleFactory {
         actions.setPadding(new Insets(4, 0, 0, 0));
 
         // 复制按钮：复制完整消息文本到剪贴板，1.5s 内显示"已复制"反馈
-        Button copyBtn = new Button("复制");
+        Button copyBtn = new Button("⧉ 复制");
         copyBtn.getStyleClass().add("ai-msg-action-btn");
         copyBtn.setOnAction(e -> {
             Clipboard clipboard = Clipboard.getSystemClipboard();
@@ -257,11 +276,11 @@ public class ChatBubbleFactory {
             content.putString(fullText);
             clipboard.setContent(content);
             copyBtn.setText("✓ 已复制");
-            new Timeline(new KeyFrame(Duration.millis(1500), ev -> copyBtn.setText("复制"))).play();
+            new Timeline(new KeyFrame(Duration.millis(1500), ev -> copyBtn.setText("⧉ 复制"))).play();
         });
 
         // 重试按钮：触发重新生成
-        Button regenBtn = new Button("重试");
+        Button regenBtn = new Button("↻ 重试");
         regenBtn.getStyleClass().add("ai-msg-action-btn");
         regenBtn.setOnAction(e -> regenerateCallback.run());
 
@@ -287,6 +306,30 @@ public class ChatBubbleFactory {
         }
         // 刷新 fullText，供右键菜单"复制全部"取最新文本
         bubble.getProperties().put("fullText", text == null ? "" : text);
+    }
+
+    private static void markComplete(VBox bubble) {
+        Object node = bubble.getProperties().get("liveStateLabel");
+        if (node instanceof Label label) {
+            label.setText("● DONE");
+            label.getStyleClass().remove("ai-bubble-live-state");
+            if (!label.getStyleClass().contains("ai-bubble-done-state")) {
+                label.getStyleClass().add("ai-bubble-done-state");
+            }
+        }
+    }
+
+    /** 根据文本长度估算只读消息框高度，避免短消息仍占用 TextArea 的默认大块空白。 */
+    private static void fitMessageArea(TextArea area, String text, double maxHeight) {
+        String safe = text == null ? "" : text;
+        int visualLines = 0;
+        for (String line : safe.split("\\R", -1)) {
+            visualLines += Math.max(1, (line.length() + 38) / 39);
+        }
+        double height = Math.max(30, Math.min(maxHeight, visualLines * 20.0 + 8));
+        area.setPrefHeight(height);
+        area.setMinHeight(height);
+        area.setMaxHeight(maxHeight);
     }
 
     /**

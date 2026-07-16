@@ -14,7 +14,11 @@ import java.util.function.Consumer;
 public class MonitorService {
     private static final Logger logger = LoggerFactory.getLogger(MonitorService.class);
     private static MonitorService instance;
-    private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(4);
+    private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(4, runnable -> {
+        Thread thread = new Thread(runnable, "ServerMonitor");
+        thread.setDaemon(true);
+        return thread;
+    });
     private final Map<Long, ScheduledFuture<?>> monitorTasks = new ConcurrentHashMap<>();
     private final Map<Long, List<Double>> cpuHistory = new ConcurrentHashMap<>();
     private final Map<Long, List<Double>> memoryHistory = new ConcurrentHashMap<>();
@@ -60,7 +64,7 @@ public class MonitorService {
         if (intervalSec <= 0) intervalSec = 3;
 
         ScheduledFuture<?> task = scheduler.scheduleAtFixedRate(
-                () -> monitorServer(config, connectionKey),
+                () -> monitorServer(config),
                 0,
                 intervalSec,
                 TimeUnit.SECONDS
@@ -83,15 +87,53 @@ public class MonitorService {
         connectionKeys.remove(serverId);
     }
 
+    /** Runtime/test visibility for the connection lifecycle shown in the server manager UI. */
+    public boolean isMonitoring(Long serverId) {
+        ScheduledFuture<?> task = monitorTasks.get(serverId);
+        return task != null && !task.isCancelled() && !task.isDone();
+    }
+
+    public String getMonitoringConnectionKey(Long serverId) {
+        return connectionKeys.get(serverId);
+    }
+
+    /**
+     * Release one session's connection without stopping a monitor that has
+     * already moved to another tab.  If the released connection currently owns
+     * the server-level monitor, hand it to another live session for the same
+     * server; stop only when no replacement exists.
+     */
+    public void releaseConnection(Long serverId, String connectionKey) {
+        if (serverId == null || connectionKey == null) return;
+        String activeKey = connectionKeys.get(serverId);
+        if (!connectionKey.equals(activeKey)) return;
+
+        String replacement = SshConnectionManager.getInstance()
+                .findConnectedKey(serverId, connectionKey);
+        if (replacement != null) {
+            connectionKeys.replace(serverId, connectionKey, replacement);
+            logger.info("监控连接已切换: serverId={} {} -> {}",
+                    serverId, connectionKey, replacement);
+        } else {
+            stopMonitoring(serverId);
+        }
+    }
+
     public void stopAllMonitoring() {
         monitorTasks.keySet().forEach(this::stopMonitoring);
         scheduler.shutdown();
     }
 
-    private void monitorServer(ServerConfig config, String connectionKey) {
+    private void monitorServer(ServerConfig config) {
         try {
+            String connectionKey = connectionKeys.get(config.getId());
+            if (connectionKey == null) return;
             if (!SshConnectionManager.getInstance().isConnected(connectionKey)) {
-                return;
+                String replacement = SshConnectionManager.getInstance()
+                        .findConnectedKey(config.getId(), connectionKey);
+                if (replacement == null) return;
+                connectionKeys.replace(config.getId(), connectionKey, replacement);
+                connectionKey = replacement;
             }
 
             ServerMetrics metrics = null;

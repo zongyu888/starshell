@@ -66,7 +66,11 @@ public class AiConfigManager {
 
     private void loadFromFile(String path) {
         try {
-            config = (ObjectNode) objectMapper.readTree(new File(path));
+            JsonNode loaded = objectMapper.readTree(new File(path));
+            if (!(loaded instanceof ObjectNode loadedObject)) {
+                throw new IOException("AI config root must be a JSON object");
+            }
+            config = loadedObject;
             configPath = path;
             logger.info("Loaded AI config from: {}", path);
             // 加载后迁移明文密钥为加密存储
@@ -140,12 +144,37 @@ public class AiConfigManager {
 
     // ========== AI Config ==========
 
+    private ObjectNode getOrCreateObject(ObjectNode parent, String field) {
+        JsonNode existing = parent.get(field);
+        if (existing instanceof ObjectNode object) {
+            return object;
+        }
+        ObjectNode created = objectMapper.createObjectNode();
+        parent.set(field, created);
+        return created;
+    }
+
+    private ObjectNode getAiNode() {
+        return getOrCreateObject(config, "ai");
+    }
+
+    private ObjectNode getProvidersNode() {
+        return getOrCreateObject(getAiNode(), "providers");
+    }
+
+    private ObjectNode getProviderNode(String provider) {
+        if (provider == null || provider.isBlank()) {
+            throw new IllegalArgumentException("provider must not be blank");
+        }
+        return getOrCreateObject(getProvidersNode(), provider);
+    }
+
     public String getActiveProvider() {
         return config.path("ai").path("active_provider").asText("free");
     }
 
     public void setActiveProvider(String provider) {
-        ((ObjectNode) config.path("ai")).put("active_provider", provider);
+        getAiNode().put("active_provider", provider);
         saveConfig();
     }
 
@@ -154,7 +183,7 @@ public class AiConfigManager {
     }
 
     public void setActiveModel(String model) {
-        ((ObjectNode) config.path("ai")).put("active_model", model);
+        getAiNode().put("active_model", model);
         saveConfig();
     }
 
@@ -176,7 +205,7 @@ public class AiConfigManager {
     }
 
     public void setMaxToolSteps(int maxSteps) {
-        ((ObjectNode) config.path("ai")).put("max_tool_steps", maxSteps);
+        getAiNode().put("max_tool_steps", maxSteps);
         saveConfig();
     }
 
@@ -204,12 +233,7 @@ public class AiConfigManager {
         }
         // 同步更新旧字段为加密值
         String encrypted = SecurityUtils.encrypt(apiKey);
-        ObjectNode providers = (ObjectNode) config.path("ai").path("providers");
-        ObjectNode p = (ObjectNode) providers.path(provider);
-        if (p.isMissingNode()) {
-            p = objectMapper.createObjectNode();
-            providers.set(provider, p);
-        }
+        ObjectNode p = getProviderNode(provider);
         p.put("api_key", encrypted);
         saveConfig();
     }
@@ -240,12 +264,7 @@ public class AiConfigManager {
     }
 
     public void setBaseUrl(String provider, String baseUrl) {
-        ObjectNode providers = (ObjectNode) config.path("ai").path("providers");
-        ObjectNode p = (ObjectNode) providers.path(provider);
-        if (p.isMissingNode()) {
-            p = objectMapper.createObjectNode();
-            providers.set(provider, p);
-        }
+        ObjectNode p = getProviderNode(provider);
         p.put("base_url", baseUrl);
         saveConfig();
     }
@@ -262,12 +281,7 @@ public class AiConfigManager {
     }
 
     public void setCustomModels(String provider, List<String> models) {
-        ObjectNode providers = (ObjectNode) config.path("ai").path("providers");
-        ObjectNode p = (ObjectNode) providers.path(provider);
-        if (p.isMissingNode()) {
-            p = objectMapper.createObjectNode();
-            providers.set(provider, p);
-        }
+        ObjectNode p = getProviderNode(provider);
         p.set("models", objectMapper.valueToTree(models));
         saveConfig();
     }

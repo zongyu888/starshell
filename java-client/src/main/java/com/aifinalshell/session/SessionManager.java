@@ -74,7 +74,13 @@ public class SessionManager {
             Set<Long> dbIds = new HashSet<>();
             for (Session s : list) dbIds.add(s.getId());
             sessions.keySet().removeIf(id -> !dbIds.contains(id));
-            return new ArrayList<>(sessions.values());
+            List<Session> ordered = new ArrayList<>(sessions.values());
+            ordered.sort(Comparator
+                    .comparing(Session::getCreatedAt,
+                            Comparator.nullsLast(Comparator.naturalOrder()))
+                    .thenComparing(Session::getId,
+                            Comparator.nullsLast(Comparator.naturalOrder())));
+            return ordered;
         } catch (Exception e) {
             logger.error("Failed to get sessions", e);
             return new ArrayList<>();

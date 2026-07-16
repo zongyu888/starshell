@@ -8,6 +8,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.sql.*;
+import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -16,6 +21,10 @@ public class DatabaseManager {
     private static final Logger logger = LoggerFactory.getLogger(DatabaseManager.class);
     private static DatabaseManager instance;
     private Connection connection;
+    private String databaseBasePath;
+    private static final String DATABASE_PATH_PROPERTY = "starshell.database.path";
+    private static final String DATABASE_PATH_ENV = "STARSHELL_DATABASE_PATH";
+    private static final String PACKAGED_RUNTIME_PROPERTY = "starshell.packaged";
 
     private DatabaseManager() {
         initDatabase();
@@ -30,12 +39,77 @@ public class DatabaseManager {
 
     private void initDatabase() {
         try {
-            connection = DriverManager.getConnection("jdbc:h2:./data/aifinalshell;AUTO_SERVER=TRUE", "sa", "");
+            databaseBasePath = resolveDatabaseBasePath();
+            prepareStableDatabase(databaseBasePath);
+            String jdbcPath = new File(databaseBasePath).getAbsolutePath().replace('\\', '/');
+            connection = DriverManager.getConnection(
+                    "jdbc:h2:file:" + jdbcPath + ";AUTO_SERVER=TRUE", "sa", "");
             createTables();
             logger.info("数据库初始化成功");
-        } catch (SQLException e) {
+        } catch (SQLException | IOException e) {
             logger.error("数据库初始化失败", e);
         }
+    }
+
+    private static boolean hasExplicitDatabasePath() {
+        String property = System.getProperty(DATABASE_PATH_PROPERTY);
+        String env = System.getenv(DATABASE_PATH_ENV);
+        return (property != null && !property.isBlank()) || (env != null && !env.isBlank());
+    }
+
+    private static String resolveDatabaseBasePath() {
+        String override = System.getProperty(DATABASE_PATH_PROPERTY);
+        if (override == null || override.isBlank()) override = System.getenv(DATABASE_PATH_ENV);
+        if (override != null && !override.isBlank()) return new File(override).getAbsolutePath();
+
+        return defaultDatabaseBaseFile(
+                System.getProperty("user.home"), isPackagedRuntime()).getAbsolutePath();
+    }
+
+    /**
+     * Keep Maven/IDE development data separate from data created by a packaged
+     * StarShell distribution.  Otherwise launching the app-image on the build
+     * machine appears to "contain" the developer's saved SSH servers even though
+     * the database was never part of the package.
+     */
+    static File defaultDatabaseBaseFile(String userHome, boolean packagedRuntime) {
+        String profileDirectory = packagedRuntime ? ".starshell" : ".aifinalshell";
+        String databaseName = packagedRuntime ? "starshell" : "aifinalshell";
+        File dataDir = new File(new File(userHome, profileDirectory), "data");
+        return new File(dataDir, databaseName).getAbsoluteFile();
+    }
+
+    private static boolean isPackagedRuntime() {
+        return Boolean.parseBoolean(System.getProperty(PACKAGED_RUNTIME_PROPERTY, "false"));
+    }
+
+    /**
+     * Create the stable data directory and copy the old working-directory H2
+     * database on first launch.  Lock/temporary files are deliberately excluded;
+     * H2 recreates them for the new absolute database location.
+     */
+    private static void prepareStableDatabase(String targetBasePath) throws IOException {
+        File targetBase = new File(targetBasePath).getAbsoluteFile();
+        File parent = targetBase.getParentFile();
+        if (parent != null && !parent.isDirectory() && !parent.mkdirs()) {
+            throw new IOException("Unable to create database directory: " + parent);
+        }
+        // A release package must start with its own clean user profile.  Never
+        // import a developer database merely because the executable happened to
+        // be launched with a project directory as its working directory.
+        if (hasExplicitDatabasePath() || isPackagedRuntime()) return;
+
+        Path target = Path.of(targetBase.getPath() + ".mv.db");
+        if (Files.exists(target)) return;
+        Path legacy = new File("data", "aifinalshell.mv.db").toPath().toAbsolutePath();
+        if (Files.isRegularFile(legacy)) {
+            Files.copy(legacy, target, StandardCopyOption.COPY_ATTRIBUTES);
+            logger.info("Migrated legacy database: {} -> {}", legacy, target);
+        }
+    }
+
+    public String getDatabaseBasePath() {
+        return databaseBasePath;
     }
 
     private void createTables() throws SQLException {

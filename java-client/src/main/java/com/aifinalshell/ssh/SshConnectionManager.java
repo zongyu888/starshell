@@ -243,7 +243,7 @@ public class SshConnectionManager {
         return session != null && session.isConnected();
     }
 
-    // Backward-compatible methods using serverId (for MonitorService, DeployService)
+    // Backward-compatible methods using a default server key. New session-aware UI code uses String keys.
     // These use a shared "default" connection per server
 
     private String defaultKey(Long serverId) {
@@ -286,6 +286,23 @@ public class SshConnectionManager {
             }
         }
         return false;
+    }
+
+    /**
+     * Return any live connection for a server except the supplied key.
+     * Monitoring uses this when one of several tabs connected to the same
+     * server is closed, so the server-level monitor can move to a surviving
+     * session instead of being stopped accidentally.
+     */
+    public String findConnectedKey(Long serverId, String excludedKey) {
+        if (serverId == null) return null;
+        String suffix = "_" + serverId;
+        for (String key : sessions.keySet()) {
+            if (key.equals(excludedKey) || !key.endsWith(suffix)) continue;
+            Session session = sessions.get(key);
+            if (session != null && session.isConnected()) return key;
+        }
+        return null;
     }
 
     public static class SftpChannel {

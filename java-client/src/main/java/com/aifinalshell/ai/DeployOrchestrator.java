@@ -1,5 +1,6 @@
 package com.aifinalshell.ai;
 
+import com.aifinalshell.controller.TerminalCommandBridge;
 import com.aifinalshell.ssh.SshConnectionManager;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -223,7 +224,8 @@ public class DeployOrchestrator {
         onCommand.accept("$ " + command);
 
         try {
-            String output = SshConnectionManager.getInstance().executeCommand(sshKey, command);
+            // AI 生成的部署命令必须进入用户当前可见的 PTY，禁止静默后台 exec。
+            String output = TerminalCommandBridge.getInstance().execute(sshKey, command, 300_000);
             if (output != null && !output.isEmpty()) {
                 onCommand.accept(output);
             }
@@ -339,8 +341,8 @@ public class DeployOrchestrator {
             onProgress.accept("回滚: " + step.getName());
             onCommand.accept("$ " + step.getRollbackCommand());
             try {
-                String output = SshConnectionManager.getInstance().executeCommand(
-                        sshKey, step.getRollbackCommand());
+                String output = TerminalCommandBridge.getInstance().execute(
+                        sshKey, step.getRollbackCommand(), 300_000);
                 if (output != null && !output.isEmpty()) {
                     onCommand.accept(output);
                 }

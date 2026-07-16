@@ -15,7 +15,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * <p>覆盖范围：</p>
  * <ul>
  *   <li>{@code decide()} 分支判定纯函数的全部 4 种结果及优先级（无终端 > 重连）</li>
- *   <li>错误消息常量非空且包含"改用 execute_shell"引导</li>
+ *   <li>错误消息常量非空且明确要求恢复可见终端</li>
  *   <li>{@code execute()} 在未注册终端时的错误返回路径</li>
  *   <li>重连策略注入后，无终端场景仍优先返回"无终端"（验证优先级在集成路径也成立）</li>
  * </ul>
@@ -87,21 +87,23 @@ class TerminalCommandBridgeTest {
     class ErrorMessages {
 
         @Test
-        @DisplayName("无终端错误包含改用 execute_shell 的引导")
-        void noTerminalErrorGuidesToExecuteShell() {
+        @DisplayName("无终端错误要求先连接可见终端")
+        void noTerminalErrorRequiresVisibleConnection() {
             assertNotNull(TerminalCommandBridge.ERR_NO_TERMINAL);
-            assertTrue(TerminalCommandBridge.ERR_NO_TERMINAL.contains("execute_shell"),
-                    "无终端错误应引导 AI 改用 execute_shell");
+            assertTrue(TerminalCommandBridge.ERR_NO_TERMINAL.contains("visible"),
+                    "无终端错误应说明命令必须保持用户可见");
+            assertTrue(TerminalCommandBridge.ERR_NO_TERMINAL.contains("Connect"),
+                    "无终端错误应引导用户连接服务器");
             assertTrue(TerminalCommandBridge.ERR_NO_TERMINAL.toLowerCase().contains("error"),
                     "错误消息应以 Error 标识");
         }
 
         @Test
-        @DisplayName("断连错误包含改用 execute_shell 的引导")
-        void disconnectedErrorGuidesToExecuteShell() {
+        @DisplayName("断连错误要求手动重连")
+        void disconnectedErrorRequiresReconnect() {
             assertNotNull(TerminalCommandBridge.ERR_DISCONNECTED);
-            assertTrue(TerminalCommandBridge.ERR_DISCONNECTED.contains("execute_shell"),
-                    "断连错误应引导 AI 改用 execute_shell");
+            assertTrue(TerminalCommandBridge.ERR_DISCONNECTED.contains("Reconnect"),
+                    "断连错误应引导用户恢复可见终端");
             assertTrue(TerminalCommandBridge.ERR_DISCONNECTED.toLowerCase().contains("disconnected"),
                     "断连错误应说明是断连");
         }

@@ -141,6 +141,11 @@
                     <includes>
                         <include>**/*Test.java</include>
                     </includes>
+                    <systemPropertyVariables>
+                        <!-- Keep tests isolated from the user's real StarShell preferences. -->
+                        <starshell.app.config>${project.build.directory}/test-config/app.properties</starshell.app.config>
+                        <starshell.database.path>${project.build.directory}/test-data/aifinalshell</starshell.database.path>
+                    </systemPropertyVariables>
                 </configuration>
             </plugin>
 
@@ -211,6 +216,48 @@
                 <artifactId>maven-antrun-plugin</artifactId>
                 <version>3.1.0</version>
                 <executions>
+                    <!--
+                        Privacy gate: saved servers, passwords and API credentials are runtime
+                        user data and must never become classpath resources.  The application
+                        stores them below ~/.aifinalshell; this check also prevents a future
+                        accidental copy into src/main/resources from silently shipping them.
+                    -->
+                    <execution>
+                        <id>reject-sensitive-packaging-resources</id>
+                        <phase>validate</phase>
+                        <goals>
+                            <goal>run</goal>
+                        </goals>
+                        <configuration>
+                            <target>
+                                <resourcecount property="starshell.sensitive.resource.count">
+                                    <fileset dir="${project.basedir}/src/main/resources"
+                                             erroronmissingdir="false">
+                                        <include name="**/*.db"/>
+                                        <include name="**/*.mv.db"/>
+                                        <include name="**/*.trace.db"/>
+                                        <include name="**/*.lock.db"/>
+                                        <include name="**/*.h2.db"/>
+                                        <include name="**/config.properties"/>
+                                        <include name="**/config.json"/>
+                                        <include name="**/app.properties"/>
+                                        <include name="**/*.pem"/>
+                                        <include name="**/*.key"/>
+                                        <include name="**/*.p12"/>
+                                        <include name="**/*.jks"/>
+                                        <include name="**/id_rsa*"/>
+                                    </fileset>
+                                </resourcecount>
+                                <fail message="Refusing to package StarShell: sensitive user data was found under src/main/resources (database, connection config, API config, or private key).">
+                                    <condition>
+                                        <not>
+                                            <equals arg1="${starshell.sensitive.resource.count}" arg2="0"/>
+                                        </not>
+                                    </condition>
+                                </fail>
+                            </target>
+                        </configuration>
+                    </execution>
                     <execution>
                         <id>stage-jpackage-input</id>
                         <phase>package</phase>
@@ -314,6 +361,8 @@
                                 <argument>--java-options</argument>
                                 <argument>-Xmx512m</argument>
                                 <argument>--java-options</argument>
+                                <argument>-Dstarshell.packaged=true</argument>
+                                <argument>--java-options</argument>
                                 <argument>--add-opens</argument>
                                 <argument>--java-options</argument>
                                 <argument>java.base/java.lang=ALL-UNNAMED</argument>
@@ -383,6 +432,8 @@
                                         <argument>--java-options</argument>
                                         <argument>-Xmx512m</argument>
                                         <argument>--java-options</argument>
+                                        <argument>-Dstarshell.packaged=true</argument>
+                                        <argument>--java-options</argument>
                                         <argument>--add-opens</argument>
                                         <argument>--java-options</argument>
                                         <argument>java.base/java.lang=ALL-UNNAMED</argument>
@@ -447,6 +498,8 @@
                                         <argument>--java-options</argument>
                                         <argument>-Xmx512m</argument>
                                         <argument>--java-options</argument>
+                                        <argument>-Dstarshell.packaged=true</argument>
+                                        <argument>--java-options</argument>
                                         <argument>--add-opens</argument>
                                         <argument>--java-options</argument>
                                         <argument>java.base/java.lang=ALL-UNNAMED</argument>
@@ -510,6 +563,8 @@
                                         <argument>-Xms256m</argument>
                                         <argument>--java-options</argument>
                                         <argument>-Xmx512m</argument>
+                                        <argument>--java-options</argument>
+                                        <argument>-Dstarshell.packaged=true</argument>
                                         <argument>--java-options</argument>
                                         <argument>--add-opens</argument>
                                         <argument>--java-options</argument>

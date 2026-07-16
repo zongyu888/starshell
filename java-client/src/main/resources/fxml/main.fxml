@@ -27,7 +27,7 @@
 
     <!-- ========== Center: Left Panel + Main Content + Right Panel ========== -->
     <center>
-        <SplitPane fx:id="mainSplitPane" dividerPositions="0.2, 0.8" orientation="HORIZONTAL"
+        <SplitPane fx:id="mainSplitPane" dividerPositions="0.18, 0.65" orientation="HORIZONTAL"
                    style="-fx-background-color: #1e1e1e;">
 
             <!-- ===== Left Panel ===== -->
@@ -191,7 +191,14 @@
                             <HBox fx:id="sessionBar" spacing="0" alignment="CENTER_LEFT" prefHeight="32" minHeight="32" style="-fx-padding: 0; -fx-background-color: #252526;"/>
                         </ScrollPane>
                     </HBox>
-                    <TextArea fx:id="terminalOutput" editable="false" wrapText="true" VBox.vgrow="ALWAYS" styleClass="terminal-output"/>
+                    <StackPane VBox.vgrow="ALWAYS" styleClass="terminal-surface">
+                        <Region fx:id="terminalBackground" maxWidth="Infinity" maxHeight="Infinity"
+                                mouseTransparent="true" styleClass="terminal-background"/>
+                        <Region fx:id="terminalOverlay" maxWidth="Infinity" maxHeight="Infinity"
+                                mouseTransparent="true" styleClass="terminal-overlay"/>
+                        <TextArea fx:id="terminalOutput" editable="false" wrapText="true"
+                                  maxWidth="Infinity" maxHeight="Infinity" styleClass="terminal-output"/>
+                    </StackPane>
                     <HBox spacing="0" alignment="CENTER_LEFT" style="-fx-padding: 6 10; -fx-background-color: #0c0c0c; -fx-border-color: #3c3c3c; -fx-border-width: 1 0 0 0;">
                         <StackPane HBox.hgrow="ALWAYS" styleClass="terminal-input-wrap">
                             <TextField fx:id="commandInput" onAction="#sendCommand" promptText="> " prefHeight="34" StackPane.alignment="CENTER_LEFT" style="-fx-background-color: transparent; -fx-text-fill: #e6e6e6; -fx-font-family: 'Cascadia Code', 'Consolas', 'Microsoft YaHei', monospace; -fx-font-size: 14px; -fx-border-color: transparent; -fx-background-radius: 6; -fx-padding: 8 10; -fx-prompt-text-fill: #555;"/>
@@ -248,74 +255,66 @@
                 </SplitPane>
             </SplitPane>
 
-            <!-- ===== Right Panel: AI Chat (重设计·极简风格) ===== -->
-            <VBox fx:id="rightPanel" prefWidth="380" minWidth="0" spacing="0"
-                  style="-fx-background-color: #1e1e1e;">
-                <VBox fx:id="rightContent" VBox.vgrow="ALWAYS" spacing="0" style="-fx-background-color: #1e1e1e;">
+            <!-- ===== Right Panel: AI Chat / Live terminal copilot ===== -->
+            <VBox fx:id="rightPanel" prefWidth="430" minWidth="0" spacing="0" styleClass="ai-panel">
+                <VBox fx:id="rightContent" VBox.vgrow="ALWAYS" spacing="0" styleClass="ai-panel">
 
-                    <!-- 顶部栏：精简，仅保留必要控件 -->
-                    <HBox spacing="4" alignment="CENTER_LEFT"
-                          style="-fx-padding: 10 14; -fx-background-color: #1e1e1e; -fx-border-color: #3c3c3c; -fx-border-width: 0 0 1 0;">
-                        <Label text="%ai.title" style="-fx-text-fill: #d4d4d4; -fx-font-weight: bold; -fx-font-size: 13px;"/>
+                    <HBox spacing="10" alignment="CENTER_LEFT" styleClass="ai-panel-header">
+                        <StackPane styleClass="ai-header-logo">
+                            <Label text="✦" styleClass="ai-header-logo-glyph"/>
+                        </StackPane>
+                        <VBox spacing="1">
+                            <Label text="%ai.title" styleClass="ai-panel-title"/>
+                            <Label text="%ai.live_terminal" styleClass="ai-panel-subtitle"/>
+                        </VBox>
                         <Region HBox.hgrow="ALWAYS"/>
-                        <Button fx:id="aiNewChatBtn" text="%ai.new_chat" onAction="#newAiChat" styleClass="ai-top-btn"/>
-                        <Button fx:id="aiHistoryBtn" text="%ai.history" onAction="#showAiHistory" styleClass="ai-top-btn"/>
+                        <Label fx:id="aiActivityIndicator" text="%ai.activity_ready" styleClass="ai-activity-pill ai-activity-ready"/>
+                        <Button fx:id="aiNewChatBtn" text="+" onAction="#newAiChat" styleClass="ai-top-btn"/>
+                        <Button fx:id="aiHistoryBtn" text="◷" onAction="#showAiHistory" styleClass="ai-top-btn"/>
                         <Button fx:id="aiSettingsBtn" text="⚙" onAction="#showAiSettings" styleClass="ai-top-btn"/>
-                        <Button fx:id="aiCloseBtn" text="✕" onAction="#toggleRightPanel" styleClass="ai-top-btn"/>
                     </HBox>
 
-                    <!-- 对话区 -->
-                    <StackPane fx:id="aiChatStack" VBox.vgrow="ALWAYS" style="-fx-background-color: #1e1e1e;">
-                        <!-- 欢迎屏：极简，去掉营销文案 -->
-                        <VBox fx:id="aiWelcomeScreen" alignment="CENTER" spacing="12"
-                              style="-fx-background-color: #1e1e1e;">
-                            <Region prefHeight="60"/>
-                            <StackPane alignment="CENTER">
-                                <Pane prefWidth="56" prefHeight="56" style="-fx-background-color: #0e639c; -fx-background-radius: 28;">
-                                    <Label text="✦" style="-fx-font-size: 26px; -fx-text-fill: white;" alignment="CENTER"/>
-                                </Pane>
+                    <StackPane fx:id="aiChatStack" minHeight="0" VBox.vgrow="ALWAYS" styleClass="ai-chat-stage">
+                        <VBox fx:id="aiWelcomeScreen" minHeight="0" alignment="CENTER" spacing="10" styleClass="ai-welcome-screen">
+                            <Region prefHeight="4"/>
+                            <StackPane styleClass="ai-welcome-orbit">
+                                <Label text="✦" styleClass="ai-welcome-glyph"/>
                             </StackPane>
-                            <Label text="%ai.welcome_title" style="-fx-text-fill: #d4d4d4; -fx-font-size: 18px; -fx-font-weight: bold;"/>
-                            <Label text="%ai.welcome_subtitle" style="-fx-text-fill: #888; -fx-font-size: 12px;"/>
+                            <Label text="%ai.welcome_title" styleClass="ai-welcome-title"/>
+                            <Label text="%ai.welcome_subtitle" wrapText="true" maxWidth="330" alignment="CENTER" styleClass="ai-welcome-subtitle"/>
+                            <HBox spacing="7" alignment="CENTER" styleClass="ai-live-explainer">
+                                <Label text="●" styleClass="ai-live-dot"/>
+                                <Label text="%ai.live_explainer" styleClass="ai-live-explainer-text"/>
+                            </HBox>
+                            <VBox spacing="8" maxWidth="340" styleClass="ai-quick-actions">
+                                <Button text="%ai.quick_analyze" onAction="#aiAnalyzeServer" maxWidth="Infinity" styleClass="ai-quick-action"/>
+                                <Button text="%ai.quick_services" onAction="#aiCheckServices" maxWidth="Infinity" styleClass="ai-quick-action"/>
+                                <Button text="%ai.quick_deploy" onAction="#generateDeployScript" maxWidth="Infinity" styleClass="ai-quick-action"/>
+                            </VBox>
                         </VBox>
 
-                        <!-- 消息列表 -->
-                        <ScrollPane fx:id="aiChatScroll" fitToWidth="true" visible="false" managed="false"
-                                    style="-fx-background-color: #1e1e1e; -fx-border-color: transparent;">
-                            <VBox fx:id="aiChatMessages" spacing="12" style="-fx-padding: 15;">
-                            </VBox>
+                        <ScrollPane fx:id="aiChatScroll" minHeight="0" fitToWidth="true" visible="false" managed="false" styleClass="ai-chat-scroll">
+                            <VBox fx:id="aiChatMessages" spacing="14" styleClass="ai-chat-messages"/>
                         </ScrollPane>
                     </StackPane>
 
-                    <!-- 输入区：单一圆角容器，去掉独立 Agent Tag 栏 -->
-                    <VBox spacing="0" style="-fx-padding: 10 14 14 14; -fx-background-color: #1e1e1e;">
-                        <!-- 文件引用标签栏：动态显示被用户引用的文件/文件夹路径 -->
-                        <FlowPane fx:id="fileReferences" vgap="4" hgap="6"
-                                  visible="false" managed="false"
-                                  style="-fx-padding: 0 0 8 0;">
-                        </FlowPane>
-                        <StackPane styleClass="ai-input-wrap">
-                            <TextArea fx:id="aiInput" prefHeight="90" wrapText="true"
-                                  promptText="%ai.input_prompt"
-                                  style="-fx-control-inner-background: transparent; -fx-text-fill: #d4d4d4; -fx-font-size: 14px; -fx-border-color: transparent; -fx-background-color: transparent; -fx-background-radius: 10; -fx-padding: 10 12; -fx-prompt-text-fill: #666;"/>
-                        </StackPane>
-
-                        <!-- 底部工具栏：两行紧凑布局，统一按钮高度，突出发送按钮 -->
-                        <VBox spacing="6" styleClass="ai-bottom-toolbar">
-                            <!-- 第一行：模型选择 + 模型配置 + 上传（筛选栏已移除）-->
-                            <HBox spacing="8" alignment="CENTER_LEFT">
-                                <ComboBox fx:id="modelSelector" prefWidth="150" prefHeight="30" styleClass="ai-combo"/>
+                    <VBox spacing="0" styleClass="ai-composer-shell">
+                        <FlowPane fx:id="fileReferences" vgap="4" hgap="6" visible="false" managed="false" styleClass="ai-file-references"/>
+                        <VBox spacing="0" styleClass="ai-input-wrap">
+                            <TextArea fx:id="aiInput" prefHeight="72" wrapText="true" promptText="%ai.input_prompt" styleClass="ai-composer-input"/>
+                            <HBox spacing="8" alignment="CENTER_LEFT" styleClass="ai-composer-controls">
+                                <ComboBox fx:id="modelSelector" prefWidth="135" prefHeight="30" styleClass="ai-combo"/>
+                                <Button fx:id="aiModelConfigBtn" text="⚙" onAction="#showCustomModelConfig" styleClass="ai-composer-icon-btn" prefHeight="30"/>
+                                <Button fx:id="aiUploadBtn" text="＋" onAction="#attachFilesToAi" styleClass="ai-composer-icon-btn" prefHeight="30"/>
                                 <Region HBox.hgrow="ALWAYS"/>
-                                <Button fx:id="aiModelConfigBtn" text="%ai.model_config" onAction="#showCustomModelConfig" styleClass="ai-tool-btn-text" prefHeight="30"/>
-                                <Button fx:id="aiUploadBtn" text="%ai.upload" onAction="#attachFilesToAi" styleClass="ai-tool-btn-text" prefHeight="30"/>
-                            </HBox>
-                            <!-- 第二行：连接状态 + 发送 -->
-                            <HBox spacing="8" alignment="CENTER_LEFT">
-                                <Label fx:id="aiConnectionIndicator" text="%ai.connected" styleClass="ai-conn-indicator"/>
-                                <Region HBox.hgrow="ALWAYS"/>
-                                <Button fx:id="aiSendBtn" text="%ai.send" onAction="#handleSendOrStop" prefHeight="36" minWidth="96" styleClass="ai-send-btn"/>
+                                <Button fx:id="aiSendBtn" text="%ai.send" onAction="#handleSendOrStop" prefHeight="36" minWidth="76" styleClass="ai-send-btn"/>
                             </HBox>
                         </VBox>
+                        <HBox spacing="8" alignment="CENTER_LEFT" styleClass="ai-composer-meta">
+                            <Label fx:id="aiConnectionIndicator" text="%ai.connected" styleClass="ai-conn-indicator"/>
+                            <Region HBox.hgrow="ALWAYS"/>
+                            <Label text="%ai.input_hint" styleClass="ai-input-hint"/>
+                        </HBox>
                     </VBox>
 
                 </VBox>

@@ -14,7 +14,7 @@ import java.util.concurrent.ConcurrentHashMap;
  *
  * <p>修复项5（AI 与终端同步）：execute 在检测到终端断连时，先尝试一次自动重连
  * （通过 {@link ReconnectStrategy}，由 MainController 注入），重连成功则重试命令；
- * 失败则返回统一、明确的错误，引导 AI 改用 execute_shell，避免 AI 盲目重试卡死。</p>
+ * 失败则返回统一、明确的错误，引导用户恢复可见终端，避免命令静默转入后台执行。</p>
  */
 public class TerminalCommandBridge {
     private static final TerminalCommandBridge INSTANCE = new TerminalCommandBridge();
@@ -97,15 +97,15 @@ public class TerminalCommandBridge {
         return ExecuteOutcome.ERROR_DISCONNECTED;
     }
 
-    /** 未注册可见终端时的统一错误（引导 AI 改用 execute_shell） */
+    /** 未注册可见终端时的统一错误。命令不得静默降级到用户不可见的后台通道。 */
     static final String ERR_NO_TERMINAL =
             "Error: no visible terminal registered for this server. "
-                    + "Connect to the server first, or use execute_shell for non-interactive commands.";
+                    + "Connect to the server first so commands remain visible to the user.";
 
-    /** 终端断连且重连失败时的统一错误（引导 AI 改用 execute_shell） */
+    /** 终端断连且重连失败时的统一错误。 */
     static final String ERR_DISCONNECTED =
             "Error: terminal disconnected and auto-reconnect failed. "
-                    + "Reconnect the server manually, or use execute_shell for non-interactive commands.";
+                    + "Reconnect the server manually before running another command.";
 
     /**
      * 在可见终端里执行命令并返回捕获的输出。
@@ -113,7 +113,7 @@ public class TerminalCommandBridge {
      * @param sshKey    SSH 连接键
      * @param command   要执行的 shell 命令
      * @param timeoutMs 等待输出的超时时间（毫秒）
-     * @return 命令输出文本；未注册/未连接（且重连失败）时返回错误说明（提示改用 execute_shell）
+     * @return 命令输出文本；未注册/未连接（且重连失败）时返回明确错误
      */
     public String execute(String sshKey, String command, long timeoutMs) {
         TerminalController t = (sshKey == null) ? null : terminals.get(sshKey);

@@ -34,7 +34,7 @@ public class ToolRegistry {
     }
 
     private void registerBuiltinTools() {
-        // execute_shell - Execute shell command (prefer visible terminal, fall back to background SSH)
+        // execute_shell - Execute shell command exclusively in the user-visible terminal
         register(new ToolDefinition("execute_shell", "execute_shell",
                 "Execute a shell command on the remote server. The command will be typed into the user-visible terminal "
                 + "so the user can watch it execute in real time (cwd persists across calls). "
@@ -46,25 +46,11 @@ public class ToolRegistry {
                     if (command == null || command.isEmpty()) {
                         return "Error: No command provided";
                     }
-                    String sshKey = ctx.getSshKey();
-                    // 优先在可见终端执行：用户能看到 AI 实时输入命令和输出，体验"高大上"
                     try {
-                        String visibleResult = TerminalCommandBridge.getInstance().execute(sshKey, command, 300000);
-                        // 若可见终端返回"no visible terminal"或"disconnected"类错误，回退到后台 SSH 执行
-                        if (visibleResult != null
-                                && !visibleResult.startsWith("Error: no visible terminal")
-                                && !visibleResult.startsWith("Error: terminal disconnected")
-                                && !visibleResult.contains("Reconnect the server manually")) {
-                            return visibleResult;
-                        }
-                    } catch (Exception ignored) {
-                        // 可见终端执行异常时回退
-                    }
-                    try {
-                        String result = SshConnectionManager.getInstance().executeCommand(sshKey, command);
-                        return result.isEmpty() ? "(no output)" : result;
+                        return TerminalCommandBridge.getInstance()
+                                .execute(ctx.getSshKey(), command, 300000);
                     } catch (Exception e) {
-                        return "Error executing command: " + e.getMessage();
+                        return "Error executing command in visible terminal: " + e.getMessage();
                     }
                 }));
 
@@ -124,7 +110,8 @@ public class ToolRegistry {
                     String sshKey = ctx.getSshKey();
                     String command = "ss -tlnp | grep :" + port;
                     String result = executeViaVisibleTerminal(sshKey, command);
-                    if (result != null && result.trim().equals("(no output)")) {
+                    if (result != null && (result.trim().equals("(no output)")
+                            || hasNonZeroExitCode(result))) {
                         return "Port " + port + " is NOT listening";
                     }
                     return "Port " + port + " is listening:\n" + result;
@@ -421,27 +408,23 @@ public class ToolRegistry {
     }
 
     /**
-     * 优先在可见终端执行命令（用户可见），不可用时回退到后台 SSH。
-     * 让所有命令操作都在终端里可见，营造"AI 在帮你操作"的沉浸感。
+     * 在可见终端执行命令。不可用时返回错误，不允许静默回退到后台 SSH，
+     * 从而保证用户看到 AI 执行的每一条 shell 命令及其输出。
      */
     private String executeViaVisibleTerminal(String sshKey, String command) {
-        // 优先可见终端
         try {
-            String visibleResult = TerminalCommandBridge.getInstance().execute(sshKey, command, 300000);
-            if (visibleResult != null
-                    && !visibleResult.startsWith("Error: no visible terminal")
-                    && !visibleResult.startsWith("Error: terminal disconnected")
-                    && !visibleResult.contains("Reconnect the server manually")) {
-                return visibleResult;
-            }
-        } catch (Exception ignored) {}
-        // 回退后台 SSH
-        try {
-            String result = SshConnectionManager.getInstance().executeCommand(sshKey, command);
-            return result.isEmpty() ? "(no output)" : result;
+            return TerminalCommandBridge.getInstance().execute(sshKey, command, 300000);
         } catch (Exception e) {
-            return "Error executing command: " + e.getMessage();
+            return "Error executing command in visible terminal: " + e.getMessage();
         }
+    }
+
+    private boolean hasNonZeroExitCode(String result) {
+        if (result == null) return false;
+        java.util.regex.Matcher matcher = java.util.regex.Pattern
+                .compile("\\[exit code: (\\d+)\\]")
+                .matcher(result);
+        return matcher.find() && !"0".equals(matcher.group(1));
     }
 
     public void register(ToolDefinition tool) {

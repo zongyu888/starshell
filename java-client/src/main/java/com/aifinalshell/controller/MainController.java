@@ -1,5 +1,6 @@
 package com.aifinalshell.controller;
 
+import com.aifinalshell.AiFinalShellApp;
 import com.aifinalshell.ai.AiServiceClient;
 import com.aifinalshell.ai.OpsPromptTemplates;
 import com.aifinalshell.ai.TerminalEvent;
@@ -10,7 +11,6 @@ import com.aifinalshell.agent.tool.ToolContext;
 import com.aifinalshell.agent.tool.ToolPermission;
 import com.aifinalshell.config.AiConfigManager;
 import com.aifinalshell.config.AppConfig;
-import com.aifinalshell.deploy.DeployService;
 import com.aifinalshell.model.*;
 import com.aifinalshell.monitor.MonitorService;
 import com.aifinalshell.provider.ChatMessage;
@@ -26,6 +26,8 @@ import com.aifinalshell.ui.PasswordRetryDialog;
 import com.aifinalshell.ui.PasswordToggleField;
 import com.aifinalshell.util.SecurityUtils;
 import com.jcraft.jsch.ChannelShell;
+import javafx.animation.KeyFrame;
+import javafx.animation.Timeline;
 import javafx.application.Platform;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
@@ -35,7 +37,9 @@ import javafx.css.PseudoClass;
 import javafx.scene.Scene;
 import javafx.scene.control.*;
 import javafx.geometry.Insets;
+import javafx.geometry.Orientation;
 import javafx.geometry.Pos;
+import javafx.scene.Node;
 import javafx.scene.input.Clipboard;
 import javafx.scene.input.ClipboardContent;
 import javafx.scene.input.Dragboard;
@@ -44,20 +48,22 @@ import javafx.scene.input.KeyCombination;
 import javafx.scene.input.TransferMode;
 import javafx.scene.layout.FlowPane;
 import javafx.scene.layout.HBox;
+import javafx.scene.layout.Region;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 import javafx.scene.text.Text;
 import javafx.stage.FileChooser;
 import javafx.stage.Stage;
+import javafx.util.Duration;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.net.URL;
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class MainController implements Initializable {
@@ -66,7 +72,7 @@ public class MainController implements Initializable {
 
     // ========== UI Components ==========
     // Main layout
-    @FXML private SplitPane mainSplitPane;
+    @FXML private SplitPane mainSplitPane, centerSplitPane;
     @FXML private VBox leftPanel, rightPanel;
     @FXML private VBox leftContent, rightContent;
     @FXML private Button leftCollapseBtn, rightCollapseBtn;
@@ -74,8 +80,8 @@ public class MainController implements Initializable {
     private boolean leftCollapsed = false;
     private boolean rightCollapsed = false;
     // 折叠前保存的 divider 位置，用于展开恢复（用户可能拖动过 divider）
-    private double savedLeftDivider = 0.2;
-    private double savedRightDivider = 0.8;
+    private double savedLeftDivider = 0.18;
+    private double savedRightDivider = 0.65;
 
     // Left Panel - Connected Server Info
     @FXML private VBox serverInfoPanel;
@@ -87,9 +93,12 @@ public class MainController implements Initializable {
 
     // Terminal
     @FXML private TextArea terminalOutput;
+    @FXML private Region terminalBackground, terminalOverlay;
     @FXML private TextField commandInput;
     @FXML private Label aiTerminalStatus;
     private TerminalController terminalController;
+    private final Set<KeyCombination> registeredShortcuts = new HashSet<>();
+    private Timeline caretVisibilityEnforcer;
 
     // File Manager
     @FXML private SplitPane fileSplitPane;
@@ -163,6 +172,7 @@ public class MainController implements Initializable {
     @FXML private Button aiUploadBtn;
     @FXML private Label aiConnectionStatus;
     @FXML private Label aiConnectionIndicator;
+    @FXML private Label aiActivityIndicator;
 
     // Status Bar
     @FXML private Label statusText, serverInfo, modelInfo;
@@ -173,20 +183,9 @@ public class MainController implements Initializable {
     private List<ModelInfo> allModels = new ArrayList<>();
     private final Map<Long, ServerConfig> serverConfigMap = new HashMap<>();
     private final Map<String, ServerConfig> serverNameMap = new HashMap<>();
-    private final Map<Long, TerminalController> terminalControllers = new ConcurrentHashMap<>();
-    private final Map<Long, String> currentRemotePaths = new ConcurrentHashMap<>();
     private java.util.Timer monitorTimer;
 
-    // Per-session state
-    private static class SessionData {
-        String terminalText = "";
-        String remotePath = "/";
-        Long serverId = null;
-        ServerConfig serverConfig = null;
-        String connectionKey = null; // Unique SSH connection key for this session
-    }
-    private final Map<Long, SessionData> sessionDataMap = new ConcurrentHashMap<>();
-    private SessionData currentSessionData = new SessionData();
+    private final SessionWorkspaceState workspaceState = new SessionWorkspaceState();
 
     // 服务器上下文相关：当前SSH连接键（用于终端事件桥接和上下文拉取）
     private String currentConnectionKey = null;
@@ -196,7 +195,12 @@ public class MainController implements Initializable {
 
     // AI 生成状态：用于发送/停止按钮切换、停止生成、重新生成最后回复
     private volatile boolean aiGenerating = false;
-    private Thread aiGenerationThread = null;
+    private volatile Thread aiGenerationThread = null;
+    /** 每次发送递增；所有异步回调必须匹配当前 ID，防止停止后的旧请求污染新对话。 */
+    private final AtomicLong aiRequestSequence = new AtomicLong();
+    private volatile long activeAiRequestId = 0L;
+    private volatile Session activeAiSession = null;
+    private volatile String activeAiUserMessage = null;
     private String lastUserMessage = "";
 
     // 拖入 AI 面板的本地文件（待上传/部署），用户发送消息时注入 AI 上下文
@@ -214,6 +218,21 @@ public class MainController implements Initializable {
         Session current = SessionManager.getInstance().getCurrentSession();
         if (current == null || selectedServer == null) return null;
         return SshConnectionManager.connectionKey(current.getId(), selectedServer.getId());
+    }
+
+    private Long getCurrentSessionId() {
+        Session current = SessionManager.getInstance().getCurrentSession();
+        return current == null ? null : current.getId();
+    }
+
+    private String getCurrentRemotePath() {
+        Long sessionId = getCurrentSessionId();
+        return workspaceState.remotePath(sessionId);
+    }
+
+    private void setCurrentRemotePath(String path) {
+        Long sessionId = getCurrentSessionId();
+        workspaceState.setRemotePath(sessionId, path);
     }
 
     @Override
@@ -282,14 +301,10 @@ public class MainController implements Initializable {
                     Session last = SessionManager.getInstance().getSession(id);
                     if (last != null) {
                         SessionManager.getInstance().setCurrentSession(last);
-                        // 渲染历史消息到 AI 对话区
                         Platform.runLater(() -> {
-                            if (last.getMessages() != null) {
-                                for (Message m : last.getMessages()) {
-                                    // 复用现有的 addChatMessage 方法（它会在 aiChatArea 末尾追加气泡）
-                                    addChatMessage(m.getRole(), m.getContent());
-                                }
-                            }
+                            restoreSessionState(last);
+                            loadSessionMessages(last);
+                            refreshSessionBarStyle();
                         });
                         logger.info("Restored last session: {} (id={})", last.getName(), last.getId());
                     }
@@ -308,18 +323,17 @@ public class MainController implements Initializable {
         primaryStage.setOnShown(e -> setupShortcuts());
     }
 
-    /**
-     * Task 5.1: 绑定常用快捷键到 scene.getAccelerators()。
-     * 解析 AppConfig 中存储的快捷键字符串（如 "Ctrl+Shift+C"）并注册。
-     * 实现 copy/paste/clear 三个最常用动作；find 及其余动作（new_tab/close_tab/zoom 等）
-     * 因缺少对应 UI（如查找对话框）或受 JavaFX TextArea 限制而跳过。
-     */
+    /** 绑定设置页列出的全部快捷键；每次 Apply 会先移除旧绑定再按新配置重建。 */
     private void setupShortcuts() {
         if (primaryStage == null || primaryStage.getScene() == null) return;
         Scene scene = primaryStage.getScene();
         AppConfig config = AppConfig.getInstance();
 
-        // copy: 复制终端选中文本到系统剪贴板
+        for (KeyCombination combination : registeredShortcuts) {
+            scene.getAccelerators().remove(combination);
+        }
+        registeredShortcuts.clear();
+
         bindShortcut(scene, config.getShortcut("copy"), () -> {
             if (terminalController != null) {
                 String sel = terminalController.getSelectedText();
@@ -331,7 +345,6 @@ public class MainController implements Initializable {
             }
         });
 
-        // paste: 从系统剪贴板粘贴到终端
         bindShortcut(scene, config.getShortcut("paste"), () -> {
             if (terminalController != null && terminalController.isConnected()) {
                 String text = Clipboard.getSystemClipboard().getString();
@@ -341,12 +354,31 @@ public class MainController implements Initializable {
             }
         });
 
-        // clear: 清屏
+        bindShortcut(scene, config.getShortcut("find"), this::findInTerminal);
         bindShortcut(scene, config.getShortcut("clear"), () -> {
             if (terminalController != null) {
                 terminalController.clearScreen();
             }
         });
+
+        bindShortcut(scene, config.getShortcut("new_tab"), this::showNewSessionDialog);
+        bindShortcut(scene, config.getShortcut("close_tab"), () -> {
+            Session current = SessionManager.getInstance().getCurrentSession();
+            if (current != null) closeSession(current);
+        });
+        bindShortcut(scene, config.getShortcut("next_tab"), () -> cycleSession(1));
+        bindShortcut(scene, config.getShortcut("prev_tab"), () -> cycleSession(-1));
+
+        // "水平分屏"=上下排列；"垂直分屏"=左右排列。
+        bindShortcut(scene, config.getShortcut("split_horizontal"),
+                () -> setWorkspaceSplit(Orientation.VERTICAL));
+        bindShortcut(scene, config.getShortcut("split_vertical"),
+                () -> setWorkspaceSplit(Orientation.HORIZONTAL));
+        bindShortcut(scene, config.getShortcut("fullscreen"),
+                () -> primaryStage.setFullScreen(!primaryStage.isFullScreen()));
+        bindShortcut(scene, config.getShortcut("zoom_in"), () -> zoomTerminal(1));
+        bindShortcut(scene, config.getShortcut("zoom_out"), () -> zoomTerminal(-1));
+        bindShortcut(scene, config.getShortcut("zoom_reset"), () -> setTerminalZoom(14));
     }
 
     /**
@@ -359,9 +391,60 @@ public class MainController implements Initializable {
         try {
             KeyCombination combo = KeyCombination.keyCombination(shortcut);
             scene.getAccelerators().put(combo, action);
+            registeredShortcuts.add(combo);
         } catch (Exception e) {
             logger.warn("Failed to bind shortcut '{}': {}", shortcut, e.getMessage());
         }
+    }
+
+    private void findInTerminal() {
+        if (terminalOutput == null) return;
+        TextInputDialog dialog = new TextInputDialog(terminalOutput.getSelectedText());
+        dialog.initOwner(primaryStage);
+        dialog.setTitle("查找终端输出");
+        dialog.setHeaderText(null);
+        dialog.setContentText("查找内容:");
+        dialog.showAndWait().map(String::trim).filter(s -> !s.isEmpty()).ifPresent(needle -> {
+            String haystack = terminalOutput.getText();
+            int start = Math.max(0, terminalOutput.getSelection().getEnd());
+            int index = haystack.indexOf(needle, start);
+            if (index < 0 && start > 0) index = haystack.indexOf(needle);
+            if (index >= 0) {
+                terminalOutput.selectRange(index, index + needle.length());
+                terminalOutput.requestFocus();
+            } else {
+                updateStatus("未找到: " + needle);
+            }
+        });
+    }
+
+    private void cycleSession(int direction) {
+        List<Session> sessions = SessionManager.getInstance().getAllSessions();
+        if (sessions.isEmpty()) return;
+        Session current = SessionManager.getInstance().getCurrentSession();
+        int index = current == null ? -1 : sessions.indexOf(current);
+        int next = Math.floorMod(index + direction, sessions.size());
+        switchToSession(sessions.get(next));
+    }
+
+    private void setWorkspaceSplit(Orientation orientation) {
+        if (centerSplitPane == null) return;
+        centerSplitPane.setOrientation(orientation);
+        Platform.runLater(() -> centerSplitPane.setDividerPosition(0, 0.60));
+    }
+
+    private void zoomTerminal(int delta) {
+        setTerminalZoom(AppConfig.getInstance().getFontSize() + delta);
+    }
+
+    private void setTerminalZoom(int requestedSize) {
+        int size = Math.max(8, Math.min(72, requestedSize));
+        AppConfig config = AppConfig.getInstance();
+        config.setFontSize(size);
+        config.saveConfig();
+        if (terminalController != null) terminalController.loadSettings();
+        applyCommandInputSettings();
+        updateStatus("终端缩放: " + size + "px");
     }
 
     /**
@@ -487,7 +570,7 @@ public class MainController implements Initializable {
 
     @FXML
     private void showServerManager() {
-        final Dialog<Boolean> dialog = new Dialog<>();
+        final Dialog<ServerConfig> dialog = new Dialog<>();
         dialog.setTitle("Server Manager");
         dialog.setHeaderText("Manage server connections");
 
@@ -521,14 +604,20 @@ public class MainController implements Initializable {
         serverList.setOnMouseClicked(e -> {
             if (e.getClickCount() == 2) {
                 ServerConfig c = serverList.getSelectionModel().getSelectedItem();
-                if (c != null) { selectedServer = c; dialog.setResult(true); dialog.close(); }
+                if (c != null) {
+                    Button button = (Button) dialog.getDialogPane().lookupButton(connectBtn);
+                    button.fire();
+                }
             }
         });
 
         ContextMenu ctx = new ContextMenu();
         ctx.getItems().add(makeMenuItem("Connect", e -> {
             ServerConfig c = serverList.getSelectionModel().getSelectedItem();
-            if (c != null) { selectedServer = c; dialog.setResult(true); dialog.close(); }
+            if (c != null) {
+                Button button = (Button) dialog.getDialogPane().lookupButton(connectBtn);
+                button.fire();
+            }
         }));
         ctx.getItems().add(makeMenuItem("Edit", e -> {
             ServerConfig c = serverList.getSelectionModel().getSelectedItem();
@@ -562,22 +651,10 @@ public class MainController implements Initializable {
         content.setStyle("-fx-padding: 15;");
         dialog.getDialogPane().setContent(content);
 
-        dialog.setResultConverter(btn -> btn == connectBtn && serverList.getSelectionModel().getSelectedItem() != null);
-        dialog.showAndWait().ifPresent(result -> {
-            if (result != null && result && selectedServer != null) {
-                // 双击/确认连接：强制新建一个以服务器名命名的会话标签页，
-                // 让用户立刻在 sessionBar 看到对应服务器标签，而不是异步等连接完成后才出现。
-                // 原逻辑用 autoCreateSession（仅当无当前会话时创建，且命名 "Chat HH:mm"），
-                // 导致用户双击服务器后看不到"新建标签"反馈。
-                String sessionName = selectedServer.getName();
-                Session session = SessionManager.getInstance().createSession(
-                        sessionName, selectedServer.getId());
-                SessionManager.getInstance().setCurrentSession(session);
-                loadSessions();           // 立即把新标签渲染到 sessionBar
-                clearAiChat();             // 清空对话区，准备新会话
-                connectToServer(selectedServer);  // 异步连接 + 自动启动监控（connectToServerWithRetry 已含）
-            }
-        });
+        dialog.setResultConverter(btn -> btn == connectBtn
+                ? serverList.getSelectionModel().getSelectedItem() : null);
+        dialog.showAndWait().ifPresent(config ->
+                openServerSessionAndConnect(config, config.getName(), true));
     }
 
     private MenuItem makeMenuItem(String text, javafx.event.EventHandler<javafx.event.ActionEvent> h) {
@@ -790,7 +867,7 @@ public class MainController implements Initializable {
                 try {
                     DatabaseManager.getInstance().saveServerConfig(config);
                     loadServerConfigs();
-                    if (!editing) connectToServer(config);
+                    if (!editing) openServerSessionAndConnect(config, config.getName(), true);
                 } catch (Exception e) {
                     logger.error("Failed to save server", e);
                     showAlert("Save failed: " + e.getMessage());
@@ -802,52 +879,111 @@ public class MainController implements Initializable {
     @FXML
     private void connectSelectedServer() {
         if (selectedServer != null) {
-            connectToServer(selectedServer);
+            openServerSessionAndConnect(selectedServer, selectedServer.getName(), true);
         } else {
             showAlert("Please select a server from Servers menu");
         }
     }
 
-    private void connectToServer(ServerConfig config) {
-        connectToServerWithRetry(config, 3);
+    /**
+     * 所有“选择服务器并连接”交互的唯一入口。它在网络线程启动前同步创建并激活标签、
+     * 初始化会话状态，因此即使 SSH 很慢或失败，用户也能立即看到目标标签和连接状态。
+     */
+    private Session openServerSessionAndConnect(ServerConfig config, String requestedName, boolean forceNewTab) {
+        Objects.requireNonNull(config, "config");
+        if (aiGenerating) {
+            showAlert("AI 正在当前可见终端中工作，请先停止生成再连接其他服务器。");
+            return null;
+        }
+        saveCurrentSessionState();
+        if (currentConnectionKey != null) TerminalBridgeHelper.teardownBridge(currentConnectionKey);
+        if (terminalController != null) terminalController.detachForSessionSwitch();
+        currentConnectionKey = null;
+        stopLeftMonitorRefresh();
+
+        Session session = SessionManager.getInstance().getCurrentSession();
+        if (forceNewTab || session == null) {
+            String name = requestedName == null || requestedName.isBlank()
+                    ? config.getName() : requestedName.trim();
+            session = SessionManager.getInstance().createSession(name, config.getId());
+        }
+        if (session == null || session.getId() == null) {
+            showAlert("无法创建会话，请检查本地数据库后重试");
+            return null;
+        }
+
+        selectedServer = config;
+        SessionManager.getInstance().setCurrentSession(session);
+        SessionWorkspaceState.Data data = workspaceState.get(session.getId());
+        data.serverId = config.getId();
+        data.serverConfig = config;
+        data.remotePath = "/";
+        workspaceState.setRemotePath(session.getId(), "/");
+
+        loadSessions();
+        refreshSessionBarStyle();
+        loadSessionMessages(session);
+        updateStatus("Connecting: " + config.getName() + "...");
+
+        connectToServer(session, config);
+        return session;
+    }
+
+    private void connectToServer(Session session, ServerConfig config) {
+        connectToServerWithRetry(session, config, 3);
     }
 
     /**
      * 带密码重试的连接。当 SSH 认证失败（AUTH_FAILED）时弹出密码重输对话框，
      * 用户输入新密码后递归重试，最多 maxRetries 次；取消则终止。
      */
-    private void connectToServerWithRetry(ServerConfig config, int retriesLeft) {
+    private void connectToServerWithRetry(Session targetSession, ServerConfig config, int retriesLeft) {
         updateStatus("Connecting: " + config.getName() + "...");
+        final String connKey = SshConnectionManager.connectionKey(targetSession.getId(), config.getId());
 
         new Thread(() -> {
             try {
-                // Create unique connection key for this session
-                Session current = SessionManager.getInstance().getCurrentSession();
-                String connKey = (current != null) ?
-                        SshConnectionManager.connectionKey(current.getId(), config.getId()) :
-                        SshConnectionManager.connectionKey(0L, config.getId());
-
                 SshConnectionManager.getInstance().connect(connKey, config);
                 ChannelShell channel = SshConnectionManager.getInstance().openShell(connKey);
 
                 Platform.runLater(() -> {
+                    // The user may close the tab while the network connection is
+                    // still in progress.  Never resurrect its workspace or leak
+                    // the newly-created SSH session after that point.
+                    if (SessionManager.getInstance().getSession(targetSession.getId()) == null) {
+                        try { channel.disconnect(); } catch (Exception ignored) { }
+                        SshConnectionManager.getInstance().disconnect(connKey);
+                        return;
+                    }
+                    // 用户若在连接期间切到了别的标签，仍保留 SSH/监控，但不覆盖当前可见终端。
+                    Session visible = SessionManager.getInstance().getCurrentSession();
+                    boolean targetVisible = visible != null && targetSession.getId().equals(visible.getId());
+
+                    SessionWorkspaceState.Data data = workspaceState.get(targetSession.getId());
+                    data.serverId = config.getId();
+                    data.serverConfig = config;
+                    data.connectionKey = connKey;
+                    data.remotePath = workspaceState.remotePath(targetSession.getId());
+
+                    MonitorService.getInstance().startMonitoring(config, connKey);
+                    if (!targetVisible) {
+                        try { channel.disconnect(); } catch (Exception ignored) { }
+                        if (AppConfig.getInstance().isAutoSelectTab()) {
+                            switchToSession(targetSession);
+                            return;
+                        }
+                        updateStatus("Connected in background: " + config.getName());
+                        return;
+                    }
+
+                    selectedServer = config;
                     terminalController.setServerInfo(config.getName(), config.getHost(), config.getUsername());
                     terminalController.connect(connKey, channel);
-
-                    currentRemotePaths.put(config.getId(), "/");
-
-                    // Save to session data
-                    if (current != null) {
-                        SessionData data = sessionDataMap.computeIfAbsent(current.getId(), k -> new SessionData());
-                        data.serverId = config.getId();
-                        data.serverConfig = config;
-                        data.connectionKey = connKey;
-                        data.remotePath = "/";
-                    }
 
                     // AI与服务器联动：注册终端事件监听
                     currentConnectionKey = connKey;
                     TerminalBridgeHelper.setupBridge(connKey, terminalController, this);
+                    updateAiTerminalStatus(TerminalController.AiBusyState.IDLE, null);
                     // 终端+AI 联动：连接成功后在 AI 对话区加系统气泡，告知用户终端与 AI 已同步就绪
                     addChatMessage("assistant",
                         "✅ 已连接到服务器 " + config.getName()
@@ -855,13 +991,7 @@ public class MainController implements Initializable {
                         + "我可以在可见终端里执行命令并读取反馈，你可以实时看到每条命令的输入与输出。"
                         + "需要我做什么，直接说就行。");
                     // 后台拉取服务器上下文
-                    Session sessionForCtx = SessionManager.getInstance().getCurrentSession();
-                    if (sessionForCtx != null) {
-                        ServerContextHelper.fetchQuickContext(connKey, config.getId(), sessionForCtx.getId());
-                    }
-
-                    // Start monitoring
-                    MonitorService.getInstance().startMonitoring(config, connKey);
+                    ServerContextHelper.fetchQuickContext(connKey, config.getId(), targetSession.getId());
                     startLeftMonitorRefresh(config);
 
                     updateStatus("Connected: " + config.getName());
@@ -876,6 +1006,10 @@ public class MainController implements Initializable {
                     commandInput.requestFocus();
                 });
             } catch (Exception e) {
+                if (SessionManager.getInstance().getSession(targetSession.getId()) == null) {
+                    SshConnectionManager.getInstance().disconnect(connKey);
+                    return;
+                }
                 String emsg = e.getMessage() == null ? "" : e.getMessage();
                 // 认证失败（密码错误）：弹密码重输对话框，用户输入新密码后重试
                 if (emsg.startsWith("AUTH_FAILED:") && retriesLeft > 0) {
@@ -894,7 +1028,7 @@ public class MainController implements Initializable {
                                 logger.warn("重试密码保存失败（不影响本次连接）: {}", saveEx.getMessage());
                             }
                             // 用新密码重试，递减剩余次数
-                            connectToServerWithRetry(config, retriesLeft - 1);
+                            connectToServerWithRetry(targetSession, config, retriesLeft - 1);
                         } else {
                             updateStatus("连接已取消");
                         }
@@ -934,6 +1068,7 @@ public class MainController implements Initializable {
 
     @FXML
     private void disconnectServer() {
+        if (aiGenerating) stopAiGeneration();
         if (selectedServer != null) {
             String connKey = getCurrentConnectionKey();
             if (connKey != null) {
@@ -949,14 +1084,16 @@ public class MainController implements Initializable {
                 Session current = SessionManager.getInstance().getCurrentSession();
                 if (current != null) {
                     ServerContextHelper.clearContext(current.getId());
+                    workspaceState.get(current.getId()).connectionKey = null;
                 }
 
                 terminalController.disconnect();
+                updateAiTerminalStatus(TerminalController.AiBusyState.IDLE, null);
                 // 修复项5：标记为用户主动断开，状态回调据此跳过"意外断连"AI 气泡（此处已有专属断开气泡）
                 userInitiatedDisconnect = true;
                 SshConnectionManager.getInstance().disconnect(connKey);
+                MonitorService.getInstance().releaseConnection(selectedServer.getId(), connKey);
             }
-            MonitorService.getInstance().stopMonitoring(selectedServer.getId());
             stopLeftMonitorRefresh();
             updateStatus("Disconnected: " + selectedServer.getName());
             serverInfo.setText("");
@@ -972,7 +1109,7 @@ public class MainController implements Initializable {
      * {@link TerminalController#connect} 涉及 JavaFX Timeline/listener，切到 FX 线程执行并等待。</p>
      *
      * <p><b>已知限制</b>：重连后 cwd/环境变量重置为登录默认值（AI 可自行 cd 恢复）。
-     * 任何异常都视为重连失败，由 Bridge 统一返回 ERR_DISCONNECTED 引导改用 execute_shell。</p>
+     * 任何异常都视为重连失败，由 Bridge 统一返回 ERR_DISCONNECTED 并要求恢复可见终端。</p>
      *
      * @param sshKey SSH 连接键
      * @return true 表示重连成功且终端已就绪
@@ -1038,6 +1175,11 @@ public class MainController implements Initializable {
         Session current = SessionManager.getInstance().getCurrentSession();
 
         for (Session s : sessions) {
+            SessionWorkspaceState.Data data = workspaceState.get(s.getId());
+            if (data.serverId == null && s.getServerId() != null) {
+                data.serverId = s.getServerId();
+                data.serverConfig = serverConfigMap.get(s.getServerId());
+            }
             HBox tab = createSessionTab(s, current != null && current.getId().equals(s.getId()));
             sessionBar.getChildren().add(tab);
         }
@@ -1073,8 +1215,25 @@ public class MainController implements Initializable {
     }
 
     private void switchToSession(Session session) {
+        if (session == null) return;
+        Session previous = SessionManager.getInstance().getCurrentSession();
+        if (previous != null && Objects.equals(previous.getId(), session.getId())) {
+            refreshSessionBarStyle();
+            return;
+        }
+        if (aiGenerating) {
+            showStatusFeedback("AI 正在当前可见终端中工作；请先点击“停止”再切换标签");
+            return;
+        }
         // Save current session state
         saveCurrentSessionState();
+
+        if (currentConnectionKey != null) {
+            TerminalBridgeHelper.teardownBridge(currentConnectionKey);
+        }
+        if (terminalController != null) terminalController.detachForSessionSwitch();
+        currentConnectionKey = null;
+        stopLeftMonitorRefresh();
 
         // Switch to new session
         SessionManager.getInstance().setCurrentSession(session);
@@ -1091,9 +1250,9 @@ public class MainController implements Initializable {
         Session current = SessionManager.getInstance().getCurrentSession();
         if (current == null) return;
 
-        SessionData data = sessionDataMap.computeIfAbsent(current.getId(), k -> new SessionData());
+        SessionWorkspaceState.Data data = workspaceState.get(current.getId());
         data.terminalText = terminalOutput.getText();
-        data.remotePath = currentRemotePaths.getOrDefault(current.getId(), "/");
+        data.remotePath = workspaceState.remotePath(current.getId());
         if (selectedServer != null) {
             data.serverId = selectedServer.getId();
             data.serverConfig = selectedServer;
@@ -1101,14 +1260,14 @@ public class MainController implements Initializable {
     }
 
     private void restoreSessionState(Session session) {
-        SessionData data = sessionDataMap.computeIfAbsent(session.getId(), k -> new SessionData());
+        SessionWorkspaceState.Data data = workspaceState.get(session.getId());
 
         // Restore terminal text
         terminalOutput.setText(data.terminalText);
         terminalOutput.setScrollTop(Double.MAX_VALUE);
 
         // Restore remote path
-        currentRemotePaths.put(session.getId(), data.remotePath);
+        workspaceState.setRemotePath(session.getId(), data.remotePath);
 
         // Restore server connection state
         if (data.serverConfig != null) {
@@ -1120,13 +1279,12 @@ public class MainController implements Initializable {
             // 仍指向旧会话的连接键，导致 AI/SFTP 命中错误连接。连接已失效则置 null。
             if (data.connectionKey != null && SshConnectionManager.getInstance().isConnected(data.connectionKey)) {
                 currentConnectionKey = data.connectionKey;
+                MonitorService.getInstance().startMonitoring(data.serverConfig, data.connectionKey);
+                startLeftMonitorRefresh(data.serverConfig);
+                attachTerminalForSession(session, data);
             } else {
                 currentConnectionKey = null;
-            }
-
-            // If server is connected, restore monitoring
-            if (SshConnectionManager.getInstance().isConnected(data.serverId)) {
-                startLeftMonitorRefresh(data.serverConfig);
+                stopLeftMonitorRefresh();
             }
         } else {
             selectedServer = null;
@@ -1135,6 +1293,40 @@ public class MainController implements Initializable {
             serverInfo.setText("");
             stopLeftMonitorRefresh();
         }
+    }
+
+    /** 为刚激活的标签创建一个新的可见 PTY，并恢复该标签自己的终端历史。 */
+    private void attachTerminalForSession(Session session, SessionWorkspaceState.Data data) {
+        final String connKey = data.connectionKey;
+        final ServerConfig config = data.serverConfig;
+        if (connKey == null || config == null) return;
+        Thread thread = new Thread(() -> {
+            try {
+                ChannelShell channel = SshConnectionManager.getInstance().openShell(connKey);
+                Platform.runLater(() -> {
+                    Session visible = SessionManager.getInstance().getCurrentSession();
+                    if (visible == null || !Objects.equals(visible.getId(), session.getId())) {
+                        channel.disconnect();
+                        return;
+                    }
+                    selectedServer = config;
+                    currentConnectionKey = connKey;
+                    terminalController.setServerInfo(config.getName(), config.getHost(), config.getUsername());
+                    terminalController.connect(connKey, channel, data.terminalText);
+                    TerminalBridgeHelper.setupBridge(connKey, terminalController, this);
+                    updateAiTerminalStatus(TerminalController.AiBusyState.IDLE, null);
+                    updateConnectedServerInfo();
+                    serverInfo.setText(config.getUsername() + "@" + config.getHost());
+                    loadRemoteDirectory(data.remotePath == null ? "/" : data.remotePath);
+                });
+            } catch (Exception ex) {
+                logger.warn("恢复会话终端失败: session={} key={}: {}",
+                        session.getId(), connKey, ex.getMessage());
+                Platform.runLater(() -> updateStatus("会话 SSH 仍存在，但终端恢复失败: " + ex.getMessage()));
+            }
+        }, "SessionTerminal-" + session.getId());
+        thread.setDaemon(true);
+        thread.start();
     }
 
     private void refreshSessionBarStyle() {
@@ -1154,6 +1346,10 @@ public class MainController implements Initializable {
     // ========== New Session Dialog ==========
 
     private void showNewSessionDialog() {
+        if (aiGenerating) {
+            showStatusFeedback("AI 正在当前可见终端中工作；请先点击“停止”再新建标签");
+            return;
+        }
         Dialog<Boolean> dialog = new Dialog<>();
         dialog.setTitle("New Session");
         dialog.setHeaderText("Create a new chat session");
@@ -1181,7 +1377,7 @@ public class MainController implements Initializable {
                     setText(null);
                     setGraphic(null);
                 } else {
-                    boolean connected = SshConnectionManager.getInstance().isConnected(item.getId());
+                    boolean connected = SshConnectionManager.getInstance().isServerConnected(item.getId());
                     String prefix = connected ? "[Connected] " : "";
                     setText(prefix + item.getName() + "  (" + item.getHost() + ")");
                     setStyle(connected ? "-fx-text-fill: #0dbc79;" : "-fx-text-fill: #d4d4d4;");
@@ -1199,16 +1395,10 @@ public class MainController implements Initializable {
             if (e.getClickCount() == 2) {
                 ServerConfig config = serverList.getSelectionModel().getSelectedItem();
                 if (config != null) {
-                    selectedServer = config;
-                    dialog.close();
-                    // Create session：用户没输入会话名时默认用服务器名，便于在标签栏识别
                     String name = nameField.getText().isEmpty() ? config.getName() : nameField.getText();
-                    Session session = SessionManager.getInstance().createSession(name, config.getId());
-                    SessionManager.getInstance().setCurrentSession(session);
-                    loadSessions();
-                    clearAiChat();
-                    // Connect
-                    connectToServer(config);
+                    dialog.setResult(false);
+                    dialog.close();
+                    Platform.runLater(() -> openServerSessionAndConnect(config, name, true));
                 }
             }
         });
@@ -1234,7 +1424,6 @@ public class MainController implements Initializable {
         dialog.showAndWait().ifPresent(result -> {
             if (result) {
                 ServerConfig config = serverList.getSelectionModel().getSelectedItem();
-                Long serverId = config != null ? config.getId() : null;
                 // 用户没输入会话名时默认用服务器名（若有），否则回退 Chat + 当前时间
                 String name;
                 if (!nameField.getText().isEmpty()) {
@@ -1245,16 +1434,10 @@ public class MainController implements Initializable {
                     name = "Chat " + java.time.LocalTime.now().toString().substring(0, 5);
                 }
 
-                Session session = SessionManager.getInstance().createSession(name, serverId);
-                SessionManager.getInstance().setCurrentSession(session);
-                loadSessions();
-                clearAiChat();
-                updateStatus("New session: " + name);
-
-                // If a server was selected, connect
                 if (config != null) {
-                    selectedServer = config;
-                    connectToServer(config);
+                    openServerSessionAndConnect(config, name, true);
+                } else {
+                    createBlankSessionAndActivate(name);
                 }
             }
         });
@@ -1265,7 +1448,31 @@ public class MainController implements Initializable {
         showNewSessionDialog();
     }
 
+    /**
+     * Create an unconnected chat tab through the same session-switch lifecycle
+     * used by existing tabs. This saves/detaches the old PTY, clears its visible
+     * terminal bridge, and restores an empty per-session workspace so a blank
+     * chat can never inherit the previous server connection.
+     */
+    private Session createBlankSessionAndActivate(String name) {
+        Session session = SessionManager.getInstance().createSession(name, null);
+        if (session == null || session.getId() == null) {
+            showAlert("无法创建会话，请检查本地数据库后重试");
+            return null;
+        }
+        switchToSession(session);
+        loadSessions();
+        refreshSessionBarStyle();
+        updateStatus("New session: " + name);
+        return session;
+    }
+
     private void closeSession(Session session) {
+        if (aiGenerating && activeAiSession != null
+                && Objects.equals(activeAiSession.getId(), session.getId())) {
+            showStatusFeedback("AI 正在此标签中工作；请先点击“停止”再关闭标签");
+            return;
+        }
         Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
         confirm.setTitle("Close Session");
         confirm.setHeaderText(null);
@@ -1273,13 +1480,25 @@ public class MainController implements Initializable {
         confirm.showAndWait().ifPresent(btn -> {
             if (btn == ButtonType.OK) {
                 Session current = SessionManager.getInstance().getCurrentSession();
-                // Clean up session data
-                sessionDataMap.remove(session.getId());
-                currentRemotePaths.remove(session.getId());
-                terminalControllers.remove(session.getId());
+                boolean closingCurrent = current != null && current.getId().equals(session.getId());
+                SessionWorkspaceState.Data removed = workspaceState.remove(session.getId());
+
+                if (removed != null && removed.connectionKey != null) {
+                    TerminalBridgeHelper.teardownBridge(removed.connectionKey);
+                    SshConnectionManager.getInstance().disconnect(removed.connectionKey);
+                    if (removed.serverId != null) {
+                        MonitorService.getInstance().releaseConnection(
+                                removed.serverId, removed.connectionKey);
+                    }
+                }
+                if (closingCurrent) {
+                    if (terminalController != null) terminalController.detachForSessionSwitch();
+                    currentConnectionKey = null;
+                    stopLeftMonitorRefresh();
+                }
 
                 SessionManager.getInstance().deleteSession(session.getId());
-                if (current != null && current.getId().equals(session.getId())) {
+                if (closingCurrent) {
                     SessionManager.getInstance().setCurrentSession(null);
                     clearAiChat();
                     terminalOutput.clear();
@@ -1287,6 +1506,10 @@ public class MainController implements Initializable {
                     updateConnectedServerInfo();
                 }
                 loadSessions();
+                if (closingCurrent) {
+                    List<Session> remaining = SessionManager.getInstance().getAllSessions();
+                    if (!remaining.isEmpty()) switchToSession(remaining.get(0));
+                }
             }
         });
     }
@@ -1302,8 +1525,6 @@ public class MainController implements Initializable {
     // ========== Model Selector ==========
 
     private void initModelAgentSelectors() {
-        allModels = AiServiceClient.getInstance().listAllModels();
-
         // 设置单元格工厂，添加Tooltip显示模型能力
         modelSelector.setCellFactory(lv -> new ListCell<String>() {
             @Override
@@ -1324,29 +1545,100 @@ public class MainController implements Initializable {
 
         modelSelector.getSelectionModel().selectedItemProperty().addListener((obs, oldVal, newVal) -> {
             if (newVal != null) {
-                String model = newVal.replace(" ★", "").trim();
-                AiConfigManager.getInstance().setActiveModel(model);
-                modelInfo.setText(model);
-                // 更新选择器Tooltip显示当前模型能力
                 ModelInfo mi = findModelByDisplayName(allModels, newVal);
+                String clean = newVal.replace(" ★", "").trim();
+                String provider;
+                String model;
+                if (mi != null) {
+                    provider = mi.getProvider();
+                    model = mi.getId();
+                } else {
+                    int slash = clean.indexOf('/');
+                    provider = slash > 0 ? clean.substring(0, slash) :
+                            AiConfigManager.getInstance().getActiveProvider();
+                    model = slash > 0 ? clean.substring(slash + 1) : clean;
+                }
+                // 聚合选择器显示 provider/model，但 API 的 model 字段只能保存纯模型 ID。
+                // 同时切换 provider，避免选了其他供应商模型却仍向旧供应商发送请求。
+                AiConfigManager config = AiConfigManager.getInstance();
+                if (!provider.equals(config.getActiveProvider())) {
+                    config.setActiveProvider(provider);
+                }
+                if (!model.equals(config.getActiveModel())) {
+                    config.setActiveModel(model);
+                }
+                modelInfo.setText(provider + "/" + model);
+                // 更新选择器Tooltip显示当前模型能力
                 if (mi != null) {
                     modelSelector.setTooltip(new Tooltip(buildModelTooltip(mi)));
                 }
             }
         });
 
-        refreshModelSelector();
-
-        // 恢复已保存的活跃模型选择
-        String activeModel = AiConfigManager.getInstance().getActiveModel();
+        // 先立即显示已保存模型，远端 /models 聚合放到后台线程，避免启动时阻塞 JavaFX 线程。
+        AiConfigManager config = AiConfigManager.getInstance();
+        String provider = config.getActiveProvider();
+        String activeModel = normalizeStoredModelId(provider, config.getActiveModel());
         if (!activeModel.isEmpty()) {
-            for (String m : modelSelector.getItems()) {
-                if (m.contains(activeModel)) {
-                    modelSelector.getSelectionModel().select(m);
-                    break;
-                }
-            }
+            allModels = new ArrayList<>(List.of(
+                    new ModelInfo(activeModel, activeModel, provider, false)));
+            refreshModelSelector();
+            modelSelector.getSelectionModel().select(provider + "/" + activeModel);
         }
+        modelSelector.setPromptText("正在加载模型…");
+        modelSelector.setDisable(true);
+
+        Thread modelLoader = new Thread(() -> {
+            List<ModelInfo> fetched;
+            try {
+                fetched = AiServiceClient.getInstance().listAllModels();
+            } catch (Exception e) {
+                logger.warn("后台加载模型列表失败: {}", e.getMessage());
+                fetched = new ArrayList<>();
+            }
+            List<ModelInfo> loadedModels = fetched;
+            Platform.runLater(() -> {
+                AiConfigManager currentConfig = AiConfigManager.getInstance();
+                String currentProvider = currentConfig.getActiveProvider();
+                String currentModel = normalizeStoredModelId(
+                        currentProvider, currentConfig.getActiveModel());
+
+                List<ModelInfo> merged = new ArrayList<>(loadedModels);
+                boolean hasActive = merged.stream().anyMatch(m ->
+                        currentProvider.equals(m.getProvider()) && currentModel.equals(m.getId()));
+                // /models 不可用时也保留用户手工配置的模型，聊天能力不应依赖模型枚举接口成功。
+                if (!currentModel.isEmpty() && !hasActive) {
+                    merged.add(new ModelInfo(currentModel, currentModel, currentProvider, false));
+                }
+                allModels = merged;
+                refreshModelSelector();
+                String display = currentProvider + "/" + currentModel;
+                if (!currentModel.isEmpty()) {
+                    for (String item : modelSelector.getItems()) {
+                        if (item.replace(" ★", "").trim().equals(display)) {
+                            modelSelector.getSelectionModel().select(item);
+                            break;
+                        }
+                    }
+                }
+                modelSelector.setDisable(false);
+                modelSelector.setPromptText("选择模型");
+            });
+        }, "AI-Model-Loader");
+        modelLoader.setDaemon(true);
+        modelLoader.start();
+    }
+
+    /** 兼容旧版本把 provider/model 整串误存进 active_model 的配置。 */
+    private String normalizeStoredModelId(String provider, String storedModel) {
+        if (storedModel == null) return "";
+        String prefix = provider == null ? "" : provider + "/";
+        if (!prefix.isEmpty() && storedModel.startsWith(prefix)) {
+            String normalized = storedModel.substring(prefix.length());
+            AiConfigManager.getInstance().setActiveModel(normalized);
+            return normalized;
+        }
+        return storedModel;
     }
 
     /**
@@ -1412,10 +1704,11 @@ public class MainController implements Initializable {
             // 终端视觉样式（字体/颜色/背景图）统一由 TerminalController.applyBackground 负责，
             // 避免与 TerminalController 内部 setStyle 重复或互相覆盖。
             if (terminalController != null) {
-                terminalController.applyBackground();
-                // Task 5.8: 重新加载 charset + scroll_buffer，使设置对话框保存后实时生效
                 terminalController.loadSettings();
             }
+            applyCommandInputSettings();
+            setupShortcuts();
+            AiFinalShellApp.applyRuntimePreferences();
 
             logger.info("Settings applied successfully");
         } catch (Exception e) {
@@ -1423,22 +1716,21 @@ public class MainController implements Initializable {
         }
 
         // V-P2-8: 监控间隔配置变更后重启监控调度（若监控正在运行）
-        if (selectedServer != null && SshConnectionManager.getInstance().isConnected(selectedServer.getId())) {
+        if (selectedServer != null && currentConnectionKey != null
+                && SshConnectionManager.getInstance().isConnected(currentConnectionKey)) {
             String connKey = currentConnectionKey;
-            if (connKey != null) {
-                MonitorService.getInstance().stopMonitoring(selectedServer.getId());
-                MonitorService.getInstance().startMonitoring(selectedServer, connKey);
-                // UI 定时器也重启以读新间隔
-                stopLeftMonitorRefresh();
-                startLeftMonitorRefresh(selectedServer);
-            }
+            MonitorService.getInstance().stopMonitoring(selectedServer.getId());
+            MonitorService.getInstance().startMonitoring(selectedServer, connKey);
+            stopLeftMonitorRefresh();
+            startLeftMonitorRefresh(selectedServer);
         }
     }
 
     // ========== Terminal ==========
 
     private void initTerminal() {
-        terminalController = new TerminalController(terminalOutput);
+        terminalController = new TerminalController(terminalOutput, terminalBackground, terminalOverlay);
+        applyCommandInputSettings();
         terminalController.setOnStatusChange(status -> {
             Platform.runLater(() -> {
                 updateStatus(status);
@@ -1454,7 +1746,7 @@ public class MainController implements Initializable {
                     if (!userInitiatedDisconnect && currentConnectionKey != null) {
                         addChatMessage("assistant",
                             "⚠️ 终端已意外断开连接，AI 暂时无法在可见终端执行命令。\n"
-                            + "我可以改用 execute_shell 执行非交互命令，或你重新连接服务器后我继续操作终端。");
+                            + "请重新连接服务器；恢复后我会继续在你看得到的终端中操作，不会静默转入后台执行。");
                     }
                     userInitiatedDisconnect = false; // 复位，准备下一次断连判定
                 }
@@ -1462,7 +1754,7 @@ public class MainController implements Initializable {
         });
 
         // 修复项5：注册自动重连策略——AI 工具检测到终端断连时，Bridge 调用本策略尝试恢复可见终端，
-        // 成功则重试命令，失败则返回明确错误引导改用 execute_shell。
+        // 成功则重试命令，失败则返回明确错误并要求恢复可见终端。
         TerminalCommandBridge.getInstance().setReconnectStrategy(this::reconnectTerminalSync);
 
         // 终端直接键盘输入：用户可在终端区域内直接打字，不止用底部输入框。
@@ -1472,6 +1764,14 @@ public class MainController implements Initializable {
             if (terminalController == null || !terminalController.isConnected()) return;
             KeyCode code = event.getCode();
             String input = null;
+
+            // AI 捕获命令期间保持 PTY 输入原子性；只保留 Ctrl+C 作为用户随时干预/中断的通道。
+            if (terminalController.isAiCommandActive()
+                    && !(event.isControlDown() && code == KeyCode.C)) {
+                event.consume();
+                showStatusFeedback("AI 正在执行命令；如需中断请按 Ctrl+C");
+                return;
+            }
 
             if (event.isControlDown()) {
                 // Ctrl 组合键 → 对应控制字符
@@ -1507,6 +1807,10 @@ public class MainController implements Initializable {
 
         terminalOutput.setOnKeyTyped(event -> {
             if (terminalController == null || !terminalController.isConnected()) return;
+            if (terminalController.isAiCommandActive()) {
+                event.consume();
+                return;
+            }
             if (event.isControlDown() || event.isAltDown()) return; // 已在 onKeyPressed 处理
             String ch = event.getCharacter();
             if (ch != null && !ch.isEmpty()) {
@@ -1521,10 +1825,69 @@ public class MainController implements Initializable {
         terminalOutput.setOnMouseClicked(e -> terminalOutput.requestFocus());
     }
 
+    /** 应用字体与光标设置到真正接收命令的输入框。 */
+    private void applyCommandInputSettings() {
+        if (commandInput == null) return;
+        AppConfig config = AppConfig.getInstance();
+        commandInput.setStyle(String.format(
+                "-fx-background-color: transparent; -fx-text-fill: %s; "
+                        + "-fx-font-family: '%s', 'Microsoft YaHei', monospace; -fx-font-size: %dpx; "
+                        + "-fx-font-weight: %s; -fx-font-style: %s; -fx-border-color: transparent; "
+                        + "-fx-background-radius: 6; -fx-padding: 8 10; -fx-prompt-text-fill: #555; "
+                        + "-fx-highlight-fill: %s; -fx-highlight-text-fill: %s;",
+                config.getTerminalColor("foreground"), config.getFontFamily(), config.getFontSize(),
+                config.isFontBold() ? "bold" : "normal",
+                config.isFontItalic() ? "italic" : "normal",
+                config.getTerminalColor("selection"), config.getTerminalColor("foreground")));
+
+        if (caretVisibilityEnforcer != null) {
+            caretVisibilityEnforcer.stop();
+            caretVisibilityEnforcer = null;
+        }
+        Platform.runLater(() -> {
+            Node caret = commandInput.lookup(".caret");
+            if (caret == null) return;
+            applyCaretShape(caret, config.getCursorStyle(), config.getTerminalColor("cursor"));
+            if (!config.isCursorBlink()) {
+                // TextField 的原生 blink timer 没有公开开关；周期性恢复可见即可可靠关闭闪烁。
+                caretVisibilityEnforcer = new Timeline(new KeyFrame(Duration.millis(120), e -> {
+                    caret.setOpacity("block".equals(config.getCursorStyle()) ? 0.48 : 1.0);
+                    caret.setVisible(true);
+                }));
+                caretVisibilityEnforcer.setCycleCount(Timeline.INDEFINITE);
+                caretVisibilityEnforcer.play();
+            }
+        });
+    }
+
+    private void applyCaretShape(Node caret, String style, String color) {
+        caret.setRotate(0);
+        caret.setScaleX(1);
+        caret.setScaleY(1);
+        caret.setTranslateY(0);
+        caret.setOpacity(1);
+        String width = "bar".equals(style) ? "1.4" : "1.0";
+        if ("block".equals(style)) {
+            caret.setScaleX(6.5);
+            caret.setOpacity(0.48);
+        } else if ("underscore".equals(style)) {
+            caret.setRotate(90);
+            caret.setScaleY(0.9);
+            caret.setTranslateY(7);
+            width = "1.6";
+        }
+        caret.setStyle("-fx-stroke: " + color + "; -fx-fill: " + color
+                + "; -fx-stroke-width: " + width + ";");
+    }
+
     @FXML
     private void sendCommand() {
         if (terminalController == null || !terminalController.isConnected()) {
             terminalOutput.appendText("\nNot connected to server\n");
+            return;
+        }
+        if (terminalController.isAiCommandActive()) {
+            showStatusFeedback("AI 正在执行命令；如需中断请按 Ctrl+C");
             return;
         }
         String command = commandInput.getText();
@@ -2575,37 +2938,59 @@ public class MainController implements Initializable {
      * @param command 正在输入/执行的命令文本（可截断显示）
      */
     public void updateAiTerminalStatus(TerminalController.AiBusyState state, String command) {
-        if (aiTerminalStatus == null) return;
+        if (aiTerminalStatus == null && aiActivityIndicator == null) return;
         switch (state) {
             case TYPING:
                 String cmdShort = command;
                 if (cmdShort != null && cmdShort.length() > 40) {
                     cmdShort = cmdShort.substring(0, 37) + "...";
                 }
-                aiTerminalStatus.setText("🤖 AI 正在输入命令" + (cmdShort != null ? ": " + cmdShort : ""));
-                aiTerminalStatus.setStyle(
-                        "-fx-text-fill: #4a9eff;" +
-                        "-fx-font-size: 12px;" +
-                        "-fx-padding: 0 0 0 10;" +
-                        "-fx-font-family: 'Microsoft YaHei', 'Segoe UI Emoji', sans-serif;");
-                aiTerminalStatus.setVisible(true);
-                aiTerminalStatus.setManaged(true);
+                if (aiTerminalStatus != null) {
+                    aiTerminalStatus.setText("✦ AI 正在输入命令" + (cmdShort != null ? ": " + cmdShort : ""));
+                    aiTerminalStatus.setStyle(
+                            "-fx-text-fill: #58a6ff;" +
+                            "-fx-font-size: 12px;" +
+                            "-fx-padding: 0 0 0 10;" +
+                            "-fx-font-family: 'Microsoft YaHei', 'Segoe UI Emoji', sans-serif;");
+                    aiTerminalStatus.setVisible(true);
+                    aiTerminalStatus.setManaged(true);
+                }
+                setAiActivity("● TYPING", "ai-activity-typing");
                 break;
             case EXECUTING:
-                aiTerminalStatus.setText("⏳ 命令执行中...");
-                aiTerminalStatus.setStyle(
-                        "-fx-text-fill: #f0a030;" +
-                        "-fx-font-size: 12px;" +
-                        "-fx-padding: 0 0 0 10;" +
-                        "-fx-font-family: 'Microsoft YaHei', 'Segoe UI Emoji', sans-serif;");
-                aiTerminalStatus.setVisible(true);
-                aiTerminalStatus.setManaged(true);
+                if (aiTerminalStatus != null) {
+                    aiTerminalStatus.setText("↻ 命令执行中 · 输出实时回传 AI");
+                    aiTerminalStatus.setStyle(
+                            "-fx-text-fill: #d29922;" +
+                            "-fx-font-size: 12px;" +
+                            "-fx-padding: 0 0 0 10;" +
+                            "-fx-font-family: 'Microsoft YaHei', 'Segoe UI Emoji', sans-serif;");
+                    aiTerminalStatus.setVisible(true);
+                    aiTerminalStatus.setManaged(true);
+                }
+                setAiActivity("● RUNNING", "ai-activity-running");
                 break;
             case IDLE:
             default:
-                aiTerminalStatus.setVisible(false);
-                aiTerminalStatus.setManaged(false);
+                if (aiTerminalStatus != null) {
+                    aiTerminalStatus.setVisible(false);
+                    aiTerminalStatus.setManaged(false);
+                }
+                boolean ready = terminalController != null && terminalController.isConnected();
+                setAiActivity(ready ? "● READY" : "● OFFLINE",
+                        ready ? "ai-activity-ready" : "ai-activity-offline");
                 break;
+        }
+    }
+
+    private void setAiActivity(String text, String stateClass) {
+        if (aiActivityIndicator == null) return;
+        aiActivityIndicator.setText(text);
+        aiActivityIndicator.getStyleClass().removeAll(
+                "ai-activity-ready", "ai-activity-typing",
+                "ai-activity-running", "ai-activity-offline");
+        if (!aiActivityIndicator.getStyleClass().contains(stateClass)) {
+            aiActivityIndicator.getStyleClass().add(stateClass);
         }
     }
 
@@ -2755,7 +3140,7 @@ public class MainController implements Initializable {
         dialog.setTitle("新建文件");
         dialog.setHeaderText("请输入文件名:");
         dialog.showAndWait().ifPresent(name -> {
-            String path = currentRemotePaths.getOrDefault(selectedServer.getId(), "/");
+            String path = getCurrentRemotePath();
             String fullPath = path.endsWith("/") ? path + name : path + "/" + name;
             new Thread(() -> {
                 try {
@@ -3072,8 +3457,7 @@ public class MainController implements Initializable {
                     return;
                 }
                 success = true;
-                String remoteDir = currentRemotePaths.getOrDefault(
-                        selectedServer != null ? selectedServer.getId() : null, "/");
+                String remoteDir = getCurrentRemotePath();
 
                 for (File file : db.getFiles()) {
                     String remotePath = remoteDir.endsWith("/") ? remoteDir + file.getName() : remoteDir + "/" + file.getName();
@@ -3128,7 +3512,7 @@ public class MainController implements Initializable {
             showAlert("Please connect to a server first");
             return;
         }
-        String path = currentRemotePaths.getOrDefault(selectedServer.getId(), "/");
+        String path = getCurrentRemotePath();
         loadRemoteDirectory(path);
     }
 
@@ -3139,7 +3523,7 @@ public class MainController implements Initializable {
 
     @FXML
     private void navigateToParent() {
-        String current = currentRemotePaths.getOrDefault(selectedServer != null ? selectedServer.getId() : null, "/");
+        String current = getCurrentRemotePath();
         if (current.equals("/")) return;
         int lastSlash = current.lastIndexOf('/');
         String parent = lastSlash <= 0 ? "/" : current.substring(0, lastSlash);
@@ -3172,7 +3556,7 @@ public class MainController implements Initializable {
                             fileTable.getItems().add(item);
                         }
                     }
-                    currentRemotePaths.put(selectedServer.getId(), path);
+                    setCurrentRemotePath(path);
                     updateBreadcrumb(path);
                 });
             } catch (Exception e) {
@@ -3241,7 +3625,7 @@ public class MainController implements Initializable {
         chooser.setTitle("Select file to upload");
         List<File> files = chooser.showOpenMultipleDialog(primaryStage);
         if (files != null) {
-            String remoteDir = currentRemotePaths.getOrDefault(selectedServer.getId(), "/");
+            String remoteDir = getCurrentRemotePath();
             for (File file : files) {
                 String remotePath = remoteDir.endsWith("/") ? remoteDir + file.getName() : remoteDir + "/" + file.getName();
                 uploadFileToServer(file.getAbsolutePath(), remotePath);
@@ -3304,7 +3688,7 @@ public class MainController implements Initializable {
         dialog.setTitle("New Folder");
         dialog.setHeaderText("Enter folder name:");
         dialog.showAndWait().ifPresent(name -> {
-            String path = currentRemotePaths.getOrDefault(selectedServer.getId(), "/");
+            String path = getCurrentRemotePath();
             String fullPath = path.endsWith("/") ? path + name : path + "/" + name;
             new Thread(() -> {
                 try {
@@ -3321,7 +3705,7 @@ public class MainController implements Initializable {
 
     @FXML
     private void refreshFiles() {
-        String path = currentRemotePaths.getOrDefault(selectedServer != null ? selectedServer.getId() : null, "/");
+        String path = getCurrentRemotePath();
         if (path != null) loadRemoteDirectory(path);
     }
 
@@ -3528,12 +3912,13 @@ public class MainController implements Initializable {
     @FXML
     private void newAiChat() {
         if (aiGenerating) stopAiGeneration();
-        clearAiChat();
         String name = "Chat " + java.time.LocalTime.now().toString().substring(0, 5);
-        Session session = SessionManager.getInstance().createSession(name,
-                selectedServer != null ? selectedServer.getId() : null);
-        SessionManager.getInstance().setCurrentSession(session);
-        loadSessions();
+        if (selectedServer != null && currentConnectionKey != null
+                && SshConnectionManager.getInstance().isConnected(currentConnectionKey)) {
+            openServerSessionAndConnect(selectedServer, name, true);
+        } else {
+            createBlankSessionAndActivate(name);
+        }
         lastUserMessage = "";
     }
 
@@ -3541,14 +3926,34 @@ public class MainController implements Initializable {
      * 停止当前 AI 生成：中断后台线程并定稿当前气泡。
      */
     private void stopAiGeneration() {
+        // 先让当前请求失效，再中断线程；即使 provider 的异步回调稍后到达也会被请求 ID 隔离。
+        activeAiRequestId = aiRequestSequence.incrementAndGet();
         if (aiGenerationThread != null) {
             aiGenerationThread.interrupt();
             aiGenerationThread = null;
         }
+        // 会话至少保留用户的请求，并明确记录该轮被停止，避免 UI 有消息但历史记录丢失。
+        Session stoppedSession = activeAiSession;
+        String stoppedMessage = activeAiUserMessage;
+        if (stoppedSession != null && stoppedMessage != null && !stoppedMessage.isBlank()) {
+            SessionManager.getInstance().addMessage(stoppedSession.getId(),
+                    new Message("user", stoppedMessage));
+            SessionManager.getInstance().addMessage(stoppedSession.getId(),
+                    new Message("assistant", "本轮生成已由用户停止。"));
+        }
+        activeAiSession = null;
+        activeAiUserMessage = null;
         setAiGenerating(false);
+        if (lastAssistantFullText.length() > 0) {
+            lastAssistantFullText.append("\n\n_已停止生成_\n");
+        }
         finalizeAssistantBubble();
         lastAssistantBubble = null;
         lastAssistantFullText.setLength(0);
+    }
+
+    private boolean isActiveAiRequest(long requestId) {
+        return aiGenerating && activeAiRequestId == requestId;
     }
 
     /**
@@ -3575,29 +3980,27 @@ public class MainController implements Initializable {
      * 由 sendAiMessage / regenerateLastResponse 共用。
      */
     private void executeAiSend(String msg) {
-        addChatMessage("user", msg);
-
         Session session = SessionManager.getInstance().getCurrentSession();
         if (session == null) {
             String name = "Chat " + java.time.LocalTime.now().toString().substring(0, 5);
-            session = SessionManager.getInstance().createSession(name,
-                    selectedServer != null ? selectedServer.getId() : null);
-            SessionManager.getInstance().setCurrentSession(session);
-            loadSessions();
-            // 连接键漂移修复：若终端已先连接（此时 currentConnectionKey 已设但原会话为 null，
-            // SessionData 未记录），把当前连接键登记到新建会话的 SessionData，使会话切换后仍能恢复连接。
-            if (currentConnectionKey != null && selectedServer != null) {
-                SessionData data = sessionDataMap.computeIfAbsent(session.getId(), k -> new SessionData());
-                data.serverId = selectedServer.getId();
-                data.serverConfig = selectedServer;
-                data.connectionKey = currentConnectionKey;
-                data.remotePath = currentRemotePaths.getOrDefault(selectedServer.getId(), "/");
-            }
+            session = createBlankSessionAndActivate(name);
+            if (session == null) return;
         }
+        addChatMessage("user", msg);
 
         Session finalSession = session;
+        SessionWorkspaceState.Data requestWorkspace = workspaceState.get(finalSession.getId());
+        // The per-session workspace is the only authority for AI routing. Never
+        // fall back to mutable global UI fields, which may still describe a tab
+        // that was visible immediately before this request.
+        final ServerConfig requestServer = requestWorkspace.serverConfig;
+        final String requestConnectionKey = requestWorkspace.connectionKey;
         startAssistantBubble();
         setAiGenerating(true);
+        final long requestId = aiRequestSequence.incrementAndGet();
+        activeAiRequestId = requestId;
+        activeAiSession = finalSession;
+        activeAiUserMessage = msg;
 
         // 捕获拖入的文件（JavaFX 线程安全快照），发送后清空
         List<File> attachments = new ArrayList<>(pendingAttachments);
@@ -3607,20 +4010,20 @@ public class MainController implements Initializable {
         Thread genThread = new Thread(() -> {
             // 构建上下文：优先使用ServerContextHelper
             StringBuilder ctx = new StringBuilder();
-            if (selectedServer != null && finalSession != null) {
+            if (requestServer != null) {
                 String serverCtx = ServerContextHelper.getPromptContext(finalSession.getId());
                 if (serverCtx != null && !serverCtx.isEmpty()) {
                     ctx.append(serverCtx);
                 } else {
                     // 首次对话：触发完整上下文拉取
-                    if (currentConnectionKey != null) {
+                    if (requestConnectionKey != null) {
                         ServerContextHelper.fetchFullContextIfNeeded(
-                            currentConnectionKey, selectedServer.getId(), finalSession.getId());
+                            requestConnectionKey, requestServer.getId(), finalSession.getId());
                     }
                     // 回退到基本上下文
-                    ctx.append("Connected server: ").append(selectedServer.getName())
-                       .append(" (").append(selectedServer.getUsername()).append("@")
-                       .append(selectedServer.getHost()).append(")\n");
+                    ctx.append("Connected server: ").append(requestServer.getName())
+                       .append(" (").append(requestServer.getUsername()).append("@")
+                       .append(requestServer.getHost()).append(")\n");
                 }
             }
 
@@ -3637,8 +4040,8 @@ public class MainController implements Initializable {
 
             // SSH 连接状态提示：若未连接，明确告知 AI 不要调用需要 SSH 的工具，
             // 引导用户先点击工具栏"连接"按钮。避免 AI 盲目调工具后收到技术性错误。
-            boolean sshConnected = currentConnectionKey != null
-                    && SshConnectionManager.getInstance().isConnected(currentConnectionKey);
+            boolean sshConnected = requestConnectionKey != null
+                    && SshConnectionManager.getInstance().isConnected(requestConnectionKey);
             if (!sshConnected) {
                 ctx.append("\n[重要] 当前未连接到服务器。")
                    .append("请勿调用 execute_shell/run_in_terminal/check_port 等需要 SSH 连接的工具。")
@@ -3649,10 +4052,10 @@ public class MainController implements Initializable {
             ToolAgent agent = new ToolAgent();
             ToolContext toolCtx = new ToolContext(
                 String.valueOf(finalSession.getId()),
-                selectedServer != null ? String.valueOf(selectedServer.getId()) : "0",
-                selectedServer != null ? selectedServer.getHost() : "",
-                selectedServer != null ? selectedServer.getUsername() : "",
-                currentConnectionKey   // 显式传入连接时实际存储的键，避免会话 ID 漂移导致 AI 工具连不上
+                requestServer != null ? String.valueOf(requestServer.getId()) : "0",
+                requestServer != null ? requestServer.getHost() : "",
+                requestServer != null ? requestServer.getUsername() : "",
+                requestConnectionKey
             );
             String systemPrompt = OpsPromptTemplates.buildOpsAssistantPrompt(ctx.toString());
 
@@ -3673,14 +4076,19 @@ public class MainController implements Initializable {
             // onComplete 中优先用它持久化，未触发时回退到 fullResponse 保证不丢消息。
             AtomicReference<String> persistedTextRef = new AtomicReference<>();
 
-            agent.executeStream(msg, systemPrompt, toolCtx,
+            if (!isActiveAiRequest(requestId) || Thread.currentThread().isInterrupted()) {
+                return;
+            }
+
+            Thread worker = agent.executeStream(msg, systemPrompt, toolCtx,
                 token -> Platform.runLater(() -> {
-                    if (aiGenerating) {
+                    if (isActiveAiRequest(requestId)) {
                         fullResponse.append(token);
                         appendToAssistantBubble(token);
                     }
                 }),
                 () -> Platform.runLater(() -> {
+                    if (!isActiveAiRequest(requestId)) return;
                     // 用户消息照常保存
                     SessionManager.getInstance().addMessage(finalSession.getId(),
                         new Message("user", msg));
@@ -3698,22 +4106,41 @@ public class MainController implements Initializable {
                     lastAssistantFullText.setLength(0);
                     setAiGenerating(false);
                     aiGenerationThread = null;
+                    activeAiSession = null;
+                    activeAiUserMessage = null;
                 }),
                 error -> Platform.runLater(() -> {
+                    if (!isActiveAiRequest(requestId)) return;
                     // P0-6: 流式失败也要保存用户消息
                     SessionManager.getInstance().addMessage(finalSession.getId(),
                         new Message("user", msg));
-                    appendToAssistantBubble("\n\n**Error**: " + error.getMessage());
+                    String errorText = "**Error**: " +
+                            (error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage());
+                    SessionManager.getInstance().addMessage(finalSession.getId(),
+                        new Message("assistant", errorText));
+                    appendToAssistantBubble("\n\n" + errorText);
                     finalizeAssistantBubble();
                     lastAssistantBubble = null;
                     lastAssistantFullText.setLength(0);
                     setAiGenerating(false);
                     aiGenerationThread = null;
+                    activeAiSession = null;
+                    activeAiUserMessage = null;
                 }),
-                request -> Platform.runLater(() -> showToolPermissionDialog(request)),
+                request -> Platform.runLater(() -> {
+                    if (isActiveAiRequest(requestId)) showToolPermissionDialog(request);
+                    else request.deny();
+                }),
                 history,
-                text -> Platform.runLater(() -> persistedTextRef.set(text))  // onPersistedText: 仅纯回复
+                text -> Platform.runLater(() -> {
+                    if (isActiveAiRequest(requestId)) persistedTextRef.set(text);
+                })  // onPersistedText: 仅纯回复
             );
+            if (isActiveAiRequest(requestId)) {
+                aiGenerationThread = worker;
+            } else {
+                worker.interrupt();
+            }
         });
         aiGenerationThread = genThread;
         genThread.start();
@@ -3941,8 +4368,8 @@ public class MainController implements Initializable {
             if (e.getClickCount() == 2) {
                 Session sel = list.getSelectionModel().getSelectedItem();
                 if (sel != null) {
-                    dialog.setResult(sel);
-                    dialog.close();
+                    Button button = (Button) dialog.getDialogPane().lookupButton(switchBtn);
+                    button.fire();
                 }
             }
         });
@@ -3955,19 +4382,8 @@ public class MainController implements Initializable {
 
         dialog.setResultConverter(btn -> btn == switchBtn ? list.getSelectionModel().getSelectedItem() : null);
         dialog.showAndWait().ifPresent(sel -> {
-            if (sel != null) {
-                SessionManager.getInstance().setCurrentSession(sel);
-                loadSessions();
-                // 加载该会话的历史消息到聊天区
-                clearAiChat();
-                lastUserMessage = "";
-                java.util.List<Message> msgs = sel.getMessages();
-                if (msgs != null) {
-                    for (Message m : msgs) {
-                        addChatMessage(m.getRole(), m.getContent());
-                    }
-                }
-            }
+            if (sel != null) switchToSession(sel);
+            lastUserMessage = "";
         });
     }
 

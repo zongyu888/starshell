@@ -10,9 +10,12 @@ import javafx.scene.Scene;
 import javafx.scene.image.ImageView;
 import javafx.scene.control.*;
 import javafx.scene.layout.*;
+import javafx.scene.paint.Color;
 import javafx.stage.FileChooser;
 import javafx.stage.Modality;
 import javafx.stage.Stage;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.util.*;
@@ -23,7 +26,11 @@ import java.util.*;
  * 分类：常规、终端(鼠标/快捷键/配色/背景图片/字体)、语言
  */
 public class SettingsDialog extends Stage {
-    private final AppConfig config;
+    private static final Logger logger = LoggerFactory.getLogger(SettingsDialog.class);
+    /** 已提交、可被应用其余组件读取的全局配置。 */
+    private final AppConfig persistedConfig;
+    /** 当前窗口独占的草稿；控件永远不直接修改全局配置。 */
+    private final AppConfig.Draft config;
     private final StackPane contentArea;
     private final Map<String, Pane> pageCache = new HashMap<>();
     private final List<Runnable> onSaveCallbacks = new ArrayList<>();
@@ -31,12 +38,10 @@ public class SettingsDialog extends Stage {
     /** 用户打开对话框时的语言，用于检测是否变更 */
     private String originalLanguage;
 
-    /** Task 5.12: 打开对话框时的配置快照，供 Cancel 按钮回滚草稿修改 */
-    private java.util.Properties snapshot;
-
     // 页面 ID（稳定标识，不随语言变化）
     private static final String PAGE_GENERAL = "general";
     private static final String PAGE_MOUSE = "mouse";
+    private static final String PAGE_CURSOR = "cursor";
     private static final String PAGE_SHORTCUTS = "shortcuts";
     private static final String PAGE_COLORS = "colors";
     private static final String PAGE_BACKGROUND = "background";
@@ -45,9 +50,16 @@ public class SettingsDialog extends Stage {
     private static final String PAGE_ABOUT = "about";
     private static final String PAGE_MONITOR = "monitor";
 
+    private static final List<String> SHORTCUT_ACTIONS = List.of(
+            "copy", "paste", "find", "clear", "new_tab", "close_tab",
+            "next_tab", "prev_tab", "split_horizontal", "split_vertical",
+            "fullscreen", "zoom_in", "zoom_out", "zoom_reset"
+    );
+
     public SettingsDialog(Stage owner) {
-        this.config = AppConfig.getInstance();
-        this.originalLanguage = config.getLanguage();
+        this.persistedConfig = AppConfig.getInstance();
+        this.config = persistedConfig.createDraft();
+        this.originalLanguage = persistedConfig.getLanguage();
         initOwner(owner);
         initModality(Modality.APPLICATION_MODAL);
         setTitle(I18n.tr("settings.title"));
@@ -83,20 +95,12 @@ public class SettingsDialog extends Stage {
         HBox.setHgrow(spacer, Priority.ALWAYS);
 
         Button cancelBtn = new Button(I18n.tr("common.cancel"));
-        cancelBtn.setOnAction(e -> {
-            // Task 5.12: Cancel 时回滚草稿修改，恢复打开对话框时的配置快照。
-            // 控件变更会直接写入 config.properties（内存），若不回滚会"暗箱生效"。
-            config.getProperties().clear();
-            snapshot.forEach((k, v) -> config.getProperties().put(k, v));
-            config.saveConfig();
-            close();
-        });
+        cancelBtn.setOnAction(e -> close());
 
         Button okBtn = new Button(I18n.tr("common.ok"));
         okBtn.setDefaultButton(true);
         okBtn.setOnAction(e -> {
-            saveAll();
-            close();
+            if (saveAll()) close();
         });
 
         Button applyBtn = new Button(I18n.tr("common.apply"));
@@ -115,10 +119,8 @@ public class SettingsDialog extends Stage {
         scene.getStylesheets().add(getClass().getResource("/css/dark-theme.css").toExternalForm());
         setScene(scene);
 
-        // Task 5.12: 在构造函数末尾保存配置快照（打开对话框时的所有值），
-        // 供 Cancel 按钮回滚草稿修改。深拷贝避免持有内部引用。
-        snapshot = new java.util.Properties();
-        config.getProperties().forEach((k, v) -> snapshot.put(k, v));
+        // 右上角关闭与 Cancel 完全一致：直接销毁草稿，绝不触碰已经 Apply 的基线。
+        setOnCloseRequest(e -> { /* draft is intentionally discarded */ });
     }
 
     private TreeView<String> buildNavigationTree() {
@@ -132,6 +134,7 @@ public class SettingsDialog extends Stage {
         terminal.setExpanded(true);
         terminal.getChildren().addAll(
                 new TreeItem<>(PAGE_MOUSE),
+                new TreeItem<>(PAGE_CURSOR),
                 new TreeItem<>(PAGE_SHORTCUTS),
                 new TreeItem<>(PAGE_COLORS),
                 new TreeItem<>(PAGE_BACKGROUND),
@@ -181,6 +184,7 @@ public class SettingsDialog extends Stage {
         return switch (pageId) {
             case PAGE_GENERAL -> createGeneralPage();
             case PAGE_MOUSE -> createMousePage();
+            case PAGE_CURSOR -> createCursorPage();
             case PAGE_SHORTCUTS -> createShortcutsPage();
             case PAGE_COLORS -> createColorSchemePage();
             case PAGE_BACKGROUND -> createBackgroundPage();
@@ -308,6 +312,36 @@ public class SettingsDialog extends Stage {
         return box;
     }
 
+    // ==================== Cursor Page ====================
+    private Pane createCursorPage() {
+        VBox box = new VBox(15);
+        box.setPadding(new Insets(5));
+
+        HBox styleBox = new HBox(10);
+        styleBox.setAlignment(Pos.CENTER_LEFT);
+        Label styleLabel = new Label(I18n.tr("cursor.style"));
+        styleLabel(styleLabel);
+        styleLabel.setMinWidth(110);
+        ComboBox<String> styleCombo = new ComboBox<>();
+        styleCombo.getItems().addAll("block", "bar", "underscore");
+        styleCombo.setValue(config.getCursorStyle());
+        styleCombo.setOnAction(e -> config.setCursorStyle(styleCombo.getValue()));
+        styleBox.getChildren().addAll(styleLabel, styleCombo);
+
+        CheckBox blink = new CheckBox(I18n.tr("cursor.blink"));
+        blink.setSelected(config.isCursorBlink());
+        blink.selectedProperty().addListener((obs, old, value) -> config.setCursorBlink(value));
+        styleCheckBox(blink);
+
+        Label note = new Label(I18n.tr("cursor.note"));
+        note.setWrapText(true);
+        note.setStyle("-fx-text-fill: #888; -fx-font-size: 11px;");
+        note.setMaxWidth(460);
+
+        box.getChildren().addAll(styleBox, blink, note);
+        return box;
+    }
+
     // ==================== Shortcuts Page ====================
     private Pane createShortcutsPage() {
         VBox box = new VBox(5);
@@ -356,10 +390,8 @@ public class SettingsDialog extends Stage {
             keyField.setAlignment(Pos.CENTER);
             keyField.setStyle("-fx-control-inner-background: #2d2d2d; -fx-text-fill: #d4d4d4;");
             final String action = s[0];
-            keyField.setOnAction(e -> config.setShortcut(action, keyField.getText()));
-            keyField.focusedProperty().addListener((obs, o, n) -> {
-                if (!n) config.setShortcut(action, keyField.getText());
-            });
+            keyField.textProperty().addListener((obs, old, value) ->
+                    config.setShortcut(action, value == null ? "" : value.trim()));
 
             grid.add(nameLabel, 0, i + 1);
             grid.add(keyField, 1, i + 1);
@@ -411,6 +443,14 @@ public class SettingsDialog extends Stage {
                 {"magenta", "magenta", config.getTerminalColor("magenta")},
                 {"cyan", "cyan", config.getTerminalColor("cyan")},
                 {"white", "white", config.getTerminalColor("white")},
+                {"bright_black", "bright black", config.getTerminalColor("bright_black")},
+                {"bright_red", "bright red", config.getTerminalColor("bright_red")},
+                {"bright_green", "bright green", config.getTerminalColor("bright_green")},
+                {"bright_yellow", "bright yellow", config.getTerminalColor("bright_yellow")},
+                {"bright_blue", "bright blue", config.getTerminalColor("bright_blue")},
+                {"bright_magenta", "bright magenta", config.getTerminalColor("bright_magenta")},
+                {"bright_cyan", "bright cyan", config.getTerminalColor("bright_cyan")},
+                {"bright_white", "bright white", config.getTerminalColor("bright_white")},
         };
 
         colorGrid.add(boldLabel(I18n.tr("colors.name")), 0, 0);
@@ -432,14 +472,9 @@ public class SettingsDialog extends Stage {
             swatch.setPrefSize(30, 20);
             swatch.setStyle("-fx-background-color: " + c[2] + "; -fx-border-color: #666; -fx-border-width: 1;");
 
-            colorField.setOnAction(e -> {
-                config.setTerminalColor(colorName, colorField.getText());
-                swatch.setStyle("-fx-background-color: " + colorField.getText() + "; -fx-border-color: #666; -fx-border-width: 1;");
-            });
-            // Task 5.9: 颜色色块随 colorField 失焦实时联动
-            colorField.focusedProperty().addListener((obs, o, n) -> {
-                if (!n) {
-                    config.setTerminalColor(colorName, colorField.getText());
+            colorField.textProperty().addListener((obs, old, value) -> {
+                config.setTerminalColor(colorName, value == null ? "" : value.trim());
+                if (isValidColor(value)) {
                     swatch.setStyle("-fx-background-color: " + colorField.getText() + "; -fx-border-color: #666; -fx-border-width: 1;");
                 }
             });
@@ -475,6 +510,7 @@ public class SettingsDialog extends Stage {
         previewImg.setPreserveRatio(true);
         previewImg.setFitWidth(360);
         previewImg.setFitHeight(180);
+        previewImg.setOpacity(config.getBackgroundImageOpacity());
         Label noImgLabel = new Label(I18n.tr("bg.preview_area"));
         noImgLabel.setStyle("-fx-text-fill: #888;");
         preview.getChildren().add(noImgLabel);
@@ -525,10 +561,41 @@ public class SettingsDialog extends Stage {
             if (file != null) {
                 fileField.setText(file.getAbsolutePath());
                 config.setBackgroundImagePath(file.getAbsolutePath());
+                // 选择图片即代表用户希望使用它；自动启用，避免“路径已选但背景仍关闭”的隐蔽状态。
+                enableBg.setSelected(true);
                 updatePreview.accept(file.getAbsolutePath());
             }
         });
         fileBox.getChildren().addAll(fileLabel, fileField, browseBtn);
+
+        HBox fitBox = new HBox(10);
+        fitBox.setAlignment(Pos.CENTER_LEFT);
+        Label fitLabel = new Label(I18n.tr("bg.fit"));
+        styleLabel(fitLabel);
+        fitLabel.setMinWidth(80);
+        ComboBox<String> fitCombo = new ComboBox<>();
+        fitCombo.getItems().addAll("contain", "cover", "stretch");
+        fitCombo.setValue(config.getBackgroundImageFit());
+        fitCombo.setPrefWidth(190);
+        fitCombo.setCellFactory(list -> new ListCell<>() {
+            @Override
+            protected void updateItem(String item, boolean empty) {
+                super.updateItem(item, empty);
+                setText(empty || item == null ? null : I18n.tr("bg.fit." + item));
+            }
+        });
+        fitCombo.setButtonCell(new ListCell<>() {
+            @Override
+            protected void updateItem(String item, boolean empty) {
+                super.updateItem(item, empty);
+                setText(empty || item == null ? null : I18n.tr("bg.fit." + item));
+            }
+        });
+        fitCombo.setOnAction(e -> config.setBackgroundImageFit(fitCombo.getValue()));
+        Label fitHint = new Label(I18n.tr("bg.fit.hint"));
+        fitHint.setWrapText(true);
+        fitHint.setStyle("-fx-text-fill: #888; -fx-font-size: 11px;");
+        fitBox.getChildren().addAll(fitLabel, fitCombo, fitHint);
 
         HBox opacityBox = new HBox(10);
         opacityBox.setAlignment(Pos.CENTER_LEFT);
@@ -548,7 +615,7 @@ public class SettingsDialog extends Stage {
         });
         opacityBox.getChildren().addAll(opacityLabel, opacitySlider, opacityValue);
 
-        box.getChildren().addAll(enableBg, fileBox, opacityBox, preview);
+        box.getChildren().addAll(enableBg, fileBox, fitBox, opacityBox, preview);
         return box;
     }
 
@@ -900,14 +967,42 @@ public class SettingsDialog extends Stage {
                 config.setTerminalColor("white", "#e5e5e5");
             }
         }
+        for (String name : List.of("black", "red", "green", "yellow", "blue", "magenta", "cyan", "white")) {
+            Color base = Color.web(config.getTerminalColor(name));
+            Color bright = "black".equals(name) ? Color.web("#666666") : base.brighter();
+            config.setTerminalColor("bright_" + name, toHex(bright));
+        }
+        config.setTerminalColor("cursor", config.getTerminalColor("foreground"));
     }
 
-    private void saveAll() {
+    private String toHex(Color color) {
+        return String.format("#%02x%02x%02x",
+                Math.round(color.getRed() * 255),
+                Math.round(color.getGreen() * 255),
+                Math.round(color.getBlue() * 255));
+    }
+
+    private boolean saveAll() {
+        String validationError = validateSettings();
+        if (validationError != null) {
+            Alert alert = new Alert(Alert.AlertType.ERROR, validationError, ButtonType.OK);
+            alert.setTitle(I18n.tr("settings.validation_title"));
+            alert.setHeaderText(I18n.tr("settings.validation_header"));
+            alert.initOwner(this);
+            alert.showAndWait();
+            return false;
+        }
+
         boolean languageChanged = !config.getLanguage().equals(originalLanguage);
-        originalLanguage = config.getLanguage();
-        config.saveConfig();
+        persistedConfig.applyDraft(config);
+        originalLanguage = persistedConfig.getLanguage();
         for (Runnable callback : onSaveCallbacks) {
-            callback.run();
+            try {
+                callback.run();
+            } catch (RuntimeException ex) {
+                // 单个运行时组件应用失败不应阻止配置已经落盘，也不应跳过其余组件。
+                logger.error("Failed to apply settings to a runtime component", ex);
+            }
         }
 
         // 语言变更：提示重启以应用新界面语言（重启会退出当前进程，对话框自然消失）
@@ -925,17 +1020,77 @@ public class SettingsDialog extends Stage {
                 });
             });
         }
+        return true;
+    }
+
+    private String validateShortcuts() {
+        Map<String, String> shortcuts = new LinkedHashMap<>();
+        for (String action : SHORTCUT_ACTIONS) {
+            shortcuts.put(action, config.getShortcut(action));
+        }
+        return ShortcutValidator.validate(shortcuts).map(issue -> {
+            if (issue.type() == ShortcutValidator.Type.INVALID) {
+                return I18n.tr("settings.shortcut_invalid") + " " + issue.shortcut();
+            }
+            return I18n.tr("settings.shortcut_conflict") + " " + issue.shortcut()
+                    + " (" + I18n.tr("shortcuts." + issue.firstAction())
+                    + " / " + I18n.tr("shortcuts." + issue.secondAction()) + ")";
+        }).orElse(null);
+    }
+
+    private String validateSettings() {
+        String shortcutError = validateShortcuts();
+        if (shortcutError != null) return shortcutError;
+
+        for (String name : List.of(
+                "foreground", "background", "cursor", "selection", "black", "red", "green",
+                "yellow", "blue", "magenta", "cyan", "white", "bright_black", "bright_red",
+                "bright_green", "bright_yellow", "bright_blue", "bright_magenta", "bright_cyan",
+                "bright_white")) {
+            String value = config.getTerminalColor(name);
+            if (!isValidColor(value)) {
+                return I18n.tr("settings.color_invalid") + " " + name + " = " + value;
+            }
+        }
+        if (config.isBackgroundImageEnabled()) {
+            String path = config.getBackgroundImagePath();
+            if (!isLoadableBackgroundImage(path)) {
+                return I18n.tr("settings.background_invalid");
+            }
+        }
+        return null;
+    }
+
+    private boolean isValidColor(String value) {
+        if (value == null || value.isBlank()) return false;
+        try {
+            Color.web(value.trim());
+            return true;
+        } catch (IllegalArgumentException ex) {
+            return false;
+        }
+    }
+
+    private boolean isLoadableBackgroundImage(String path) {
+        if (path == null || path.isBlank()) return false;
+        File file = new File(path);
+        if (!file.isFile()) return false;
+        try {
+            javafx.scene.image.Image image = new javafx.scene.image.Image(
+                    file.toURI().toString(), 2, 2, true, true, false);
+            return !image.isError() && image.getPixelReader() != null;
+        } catch (RuntimeException ex) {
+            return false;
+        }
     }
 
     private void resetToDefaults() {
         Alert confirm = new Alert(Alert.AlertType.CONFIRMATION, I18n.tr("settings.reset_confirm"));
         confirm.showAndWait().ifPresent(btn -> {
             if (btn == ButtonType.OK) {
-                // Task 5.11: 真正重置——清空内存属性并重新填入默认值（替代旧逻辑仅删文件+saveConfig，
-                // 旧逻辑无法覆盖运行期已写入 properties 的修改值）。
+                // 只重置当前草稿；用户仍可 Cancel，只有 Apply/OK 才提交默认值。
                 config.clearAndReloadDefaults();
                 pageCache.clear();
-                originalLanguage = config.getLanguage();
                 showPage(PAGE_GENERAL);
             }
         });

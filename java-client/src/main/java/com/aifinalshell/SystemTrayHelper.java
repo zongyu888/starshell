@@ -1,5 +1,6 @@
 package com.aifinalshell;
 
+import com.aifinalshell.config.I18n;
 import javafx.application.Platform;
 import javafx.stage.Stage;
 import org.slf4j.Logger;
@@ -8,7 +9,6 @@ import org.slf4j.LoggerFactory;
 import java.awt.*;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
-import java.net.URL;
 import javax.imageio.ImageIO;
 
 /**
@@ -17,15 +17,22 @@ import javax.imageio.ImageIO;
 public class SystemTrayHelper {
     private static final Logger logger = LoggerFactory.getLogger(SystemTrayHelper.class);
     private final Stage stage;
+    private final Runnable exitAction;
     private TrayIcon trayIcon;
     private boolean isTraySupported;
 
     public SystemTrayHelper(Stage stage) {
+        this(stage, stage::close);
+    }
+
+    public SystemTrayHelper(Stage stage, Runnable exitAction) {
         this.stage = stage;
+        this.exitAction = exitAction;
         this.isTraySupported = SystemTray.isSupported();
     }
 
-    public void addTrayIcon() {
+    public synchronized void addTrayIcon() {
+        if (trayIcon != null) return;
         if (!isTraySupported) {
             logger.warn("System tray is not supported on this platform");
             return;
@@ -40,16 +47,11 @@ public class SystemTrayHelper {
             // Create popup menu
             PopupMenu popup = new PopupMenu();
 
-            MenuItem showItem = new MenuItem("显示窗口");
+            MenuItem showItem = new MenuItem(I18n.tr("tray.show"));
             showItem.addActionListener(e -> Platform.runLater(this::showStage));
 
-            MenuItem exitItem = new MenuItem("退出");
-            exitItem.addActionListener(e -> {
-                Platform.runLater(() -> {
-                    stage.close();
-                    System.exit(0);
-                });
-            });
+            MenuItem exitItem = new MenuItem(I18n.tr("tray.exit"));
+            exitItem.addActionListener(e -> Platform.runLater(exitAction));
 
             popup.add(showItem);
             popup.addSeparator();
@@ -76,12 +78,14 @@ public class SystemTrayHelper {
         }
     }
 
-    public void removeTrayIcon() {
+    public synchronized void removeTrayIcon() {
         if (trayIcon != null && isTraySupported) {
             try {
                 SystemTray.getSystemTray().remove(trayIcon);
             } catch (Exception e) {
                 logger.debug("Failed to remove tray icon", e);
+            } finally {
+                trayIcon = null;
             }
         }
     }
@@ -94,5 +98,9 @@ public class SystemTrayHelper {
 
     public boolean isTraySupported() {
         return isTraySupported;
+    }
+
+    public boolean isInstalled() {
+        return trayIcon != null;
     }
 }

@@ -27,11 +27,16 @@ import java.util.List;
 
 public class AiFinalShellApp extends Application {
     private static final Logger logger = LoggerFactory.getLogger(AiFinalShellApp.class);
+    private static volatile AiFinalShellApp instance;
     private SystemTrayHelper trayHelper;
+    private Stage primaryStage;
+    private volatile boolean exiting;
 
     @Override
     public void start(Stage primaryStage) {
         try {
+            instance = this;
+            this.primaryStage = primaryStage;
             // Set window icon
             try {
                 Image icon = new Image(getClass().getResourceAsStream("/images/icon.png"));
@@ -54,33 +59,11 @@ public class AiFinalShellApp extends Application {
 
             primaryStage.setTitle(I18n.tr("window.title"));
             primaryStage.setScene(scene);
-            primaryStage.setMinWidth(900);
-            primaryStage.setMinHeight(600);
+            primaryStage.setMinWidth(1080);
+            primaryStage.setMinHeight(680);
 
-            // Handle close confirmation
-            AppConfig config = AppConfig.getInstance();
-            primaryStage.setOnCloseRequest(event -> {
-                if (config.isConfirmBeforeClose()) {
-                    Alert confirm = new Alert(Alert.AlertType.CONFIRMATION,
-                            "确定要退出 StarShell 吗？",
-                            ButtonType.OK, ButtonType.CANCEL);
-                    confirm.setHeaderText("退出确认");
-                    confirm.showAndWait().ifPresent(btn -> {
-                        if (btn == ButtonType.OK) {
-                            performClose(primaryStage, event);
-                        } else {
-                            event.consume();
-                        }
-                    });
-                } else {
-                    performClose(primaryStage, event);
-                }
-            });
-
-            // Initialize system tray if minimize to tray is enabled
-            if (config.isMinimizeToTray()) {
-                initSystemTray(primaryStage);
-            }
+            primaryStage.setOnCloseRequest(event -> handleCloseRequest(primaryStage, event));
+            configureTrayPreference();
 
             primaryStage.show();
             logger.info("StarShell 启动成功");
@@ -89,27 +72,61 @@ public class AiFinalShellApp extends Application {
         }
     }
 
-    private void performClose(Stage stage, WindowEvent event) {
+    private void handleCloseRequest(Stage stage, WindowEvent event) {
+        if (exiting) return;
+        AppConfig config = AppConfig.getInstance();
+        if (config.isMinimizeToTray() && trayHelper != null && trayHelper.isInstalled()) {
+            event.consume();
+            stage.hide();
+            return;
+        }
+
+        // 阻止 JavaFX 先销毁窗口；确认后由统一清理路径退出。
+        event.consume();
+        if (config.isConfirmBeforeClose()) {
+            Alert confirm = new Alert(Alert.AlertType.CONFIRMATION,
+                    I18n.tr("app.exit_confirm"),
+                    ButtonType.OK, ButtonType.CANCEL);
+            confirm.initOwner(stage);
+            confirm.setHeaderText(I18n.tr("app.exit_header"));
+            if (confirm.showAndWait().orElse(ButtonType.CANCEL) != ButtonType.OK) return;
+        }
+        requestExit(stage);
+    }
+
+    private void requestExit(Stage stage) {
+        if (exiting) return;
+        exiting = true;
+        performClose(stage);
+    }
+
+    private void performClose(Stage stage) {
         logger.info("正在优雅关闭 StarShell...");
-        // 1. 断开所有SSH连接（释放通道与会话）
+        // 1. 先停止监控调度，避免关闭 SSH 时仍有采集任务提交命令。
+        try {
+            com.aifinalshell.monitor.MonitorService.getInstance().stopAllMonitoring();
+        } catch (Exception e) {
+            logger.debug("Error stopping monitor service", e);
+        }
+        // 2. 断开所有SSH连接（释放通道与会话）
         try {
             com.aifinalshell.ssh.SshConnectionManager.getInstance().disconnectAll();
         } catch (Exception e) {
             logger.debug("Error disconnecting SSH", e);
         }
-        // 2. 关闭数据库连接（确保H2写盘完成，避免数据丢失）
+        // 3. 关闭数据库连接（确保H2写盘完成，避免数据丢失）
         try {
             com.aifinalshell.service.DatabaseManager.getInstance().close();
         } catch (Exception e) {
             logger.debug("Error closing database", e);
         }
-        // 2.1 C5: 刷新 API 密钥 lastUsed 脏数据到配置文件，避免退出丢失
+        // 4. 刷新 API 密钥 lastUsed 脏数据到配置文件，避免退出丢失
         try {
             com.aifinalshell.config.ApiKeyManager.getInstance().flushAndShutdown();
         } catch (Exception e) {
             logger.debug("Error flushing api key state", e);
         }
-        // 3. 移除托盘图标
+        // 5. 移除托盘图标
         if (trayHelper != null) {
             try {
                 trayHelper.removeTrayIcon();
@@ -117,9 +134,9 @@ public class AiFinalShellApp extends Application {
                 logger.debug("Error removing tray icon", e);
             }
         }
-        // 4. 关闭JavaFX平台
+        // 6. 关闭JavaFX平台
         Platform.exit();
-        // 5. 给后台线程（SFTP上传/AI流式/监控轮询）短暂时间完成收尾，
+        // 7. 给后台线程（SFTP上传/AI流式）短暂时间完成收尾，
         //    再强制退出，避免 System.exit 立即终止导致半成品文件或日志丢失
         try {
             Thread.sleep(800);
@@ -131,11 +148,32 @@ public class AiFinalShellApp extends Application {
 
     private void initSystemTray(Stage stage) {
         try {
-            trayHelper = new SystemTrayHelper(stage);
+            if (trayHelper == null) {
+                trayHelper = new SystemTrayHelper(stage, () -> requestExit(stage));
+            }
             trayHelper.addTrayIcon();
         } catch (Exception e) {
             logger.debug("System tray not available: {}", e.getMessage());
         }
+    }
+
+    private void configureTrayPreference() {
+        if (primaryStage == null) return;
+        if (AppConfig.getInstance().isMinimizeToTray()) {
+            initSystemTray(primaryStage);
+            Platform.setImplicitExit(trayHelper == null || !trayHelper.isInstalled());
+        } else {
+            if (trayHelper != null) trayHelper.removeTrayIcon();
+            Platform.setImplicitExit(true);
+        }
+    }
+
+    /** 设置窗口 Apply 后调用，使托盘开关无需重启即可生效。 */
+    public static void applyRuntimePreferences() {
+        AiFinalShellApp app = instance;
+        if (app == null) return;
+        if (Platform.isFxApplicationThread()) app.configureTrayPreference();
+        else Platform.runLater(app::configureTrayPreference);
     }
 
     @Override
@@ -272,6 +310,10 @@ public class AiFinalShellApp extends Application {
             logger.info("已启动新进程以应用新语言，准备退出当前进程");
 
             // 优雅关闭资源
+            try {
+                com.aifinalshell.monitor.MonitorService.getInstance().stopAllMonitoring();
+            } catch (Exception ignored) {
+            }
             try {
                 com.aifinalshell.ssh.SshConnectionManager.getInstance().disconnectAll();
             } catch (Exception ignored) {

@@ -113,9 +113,21 @@
     -fx-background-insets: 0;
     -fx-line-spacing: 2;
     -fx-background-radius: 0;
+    -fx-background-color: transparent;
+}
+.terminal-surface,
+.terminal-background {
+    -fx-background-color: #0c0c0c;
+}
+.terminal-overlay {
+    -fx-background-color: #0c0c0c;
+}
+.terminal-output .scroll-pane,
+.terminal-output .viewport {
+    -fx-background-color: transparent;
 }
 .terminal-output .content {
-    -fx-background-color: #0c0c0c;
+    -fx-background-color: transparent;
     -fx-padding: 2 2;
 }
 .terminal-output:focused {
@@ -1583,3 +1595,146 @@
     -fx-border-color: #0e639c;
     -fx-background-color: #1e1e1e;
 }
+
+/* ========== StarShell Live Copilot / 2026 visual refresh ========== */
+.ai-panel {
+    -fx-background-color: #0d1117;
+    -fx-border-color: #30363d;
+    -fx-border-width: 0 0 0 1;
+}
+.ai-panel-header {
+    -fx-padding: 11 12;
+    -fx-background-color: linear-gradient(to right, #111827, #0d1117);
+    -fx-border-color: #30363d;
+    -fx-border-width: 0 0 1 0;
+}
+.ai-header-logo {
+    -fx-min-width: 32; -fx-min-height: 32; -fx-pref-width: 32; -fx-pref-height: 32;
+    -fx-background-color: linear-gradient(to bottom right, #1f6feb, #8957e5);
+    -fx-background-radius: 9;
+    -fx-effect: dropshadow(gaussian, rgba(56,139,253,0.32), 12, 0.25, 0, 2);
+}
+.ai-header-logo-glyph { -fx-text-fill: white; -fx-font-size: 16px; -fx-font-weight: bold; }
+.ai-panel-title { -fx-text-fill: #f0f6fc; -fx-font-size: 13px; -fx-font-weight: bold; }
+.ai-panel-subtitle {
+    -fx-text-fill: #6e7681; -fx-font-family: "Cascadia Code", "Consolas", monospace;
+    -fx-font-size: 8px; -fx-font-weight: bold;
+}
+.ai-activity-pill {
+    -fx-padding: 4 7; -fx-background-radius: 10; -fx-border-radius: 10;
+    -fx-font-family: "Cascadia Code", "Consolas", monospace;
+    -fx-font-size: 8px; -fx-font-weight: bold;
+}
+.ai-activity-ready {
+    -fx-text-fill: #3fb950; -fx-background-color: rgba(46,160,67,0.12);
+    -fx-border-color: rgba(63,185,80,0.38);
+}
+.ai-activity-typing {
+    -fx-text-fill: #58a6ff; -fx-background-color: rgba(31,111,235,0.14);
+    -fx-border-color: rgba(88,166,255,0.42);
+}
+.ai-activity-running {
+    -fx-text-fill: #e3b341; -fx-background-color: rgba(187,128,9,0.14);
+    -fx-border-color: rgba(227,179,65,0.42);
+}
+.ai-activity-offline {
+    -fx-text-fill: #8b949e; -fx-background-color: rgba(110,118,129,0.12);
+    -fx-border-color: #30363d;
+}
+.ai-chat-stage, .ai-chat-scroll, .ai-chat-scroll > .viewport {
+    -fx-background-color: #0d1117; -fx-border-color: transparent;
+}
+.ai-chat-messages { -fx-padding: 16 13 20 13; -fx-background-color: #0d1117; }
+.ai-welcome-screen { -fx-padding: 10 22; -fx-background-color: #0d1117; }
+.ai-welcome-orbit {
+    -fx-min-width: 62; -fx-min-height: 62; -fx-pref-width: 62; -fx-pref-height: 62;
+    -fx-max-width: 62; -fx-max-height: 62;
+    -fx-background-color: radial-gradient(center 50% 50%, radius 60%, #1f6feb, #161b22);
+    -fx-background-radius: 31; -fx-border-color: rgba(88,166,255,0.55); -fx-border-radius: 31;
+    -fx-effect: dropshadow(gaussian, rgba(31,111,235,0.34), 22, 0.22, 0, 2);
+}
+.ai-welcome-glyph { -fx-text-fill: #ffffff; -fx-font-size: 25px; -fx-font-weight: bold; }
+.ai-welcome-title { -fx-text-fill: #f0f6fc; -fx-font-size: 18px; -fx-font-weight: bold; }
+.ai-welcome-subtitle {
+    -fx-text-fill: #8b949e; -fx-font-size: 12px; -fx-line-spacing: 2; -fx-text-alignment: center;
+}
+.ai-live-explainer {
+    -fx-padding: 6 10; -fx-background-color: rgba(46,160,67,0.08);
+    -fx-border-color: rgba(63,185,80,0.28); -fx-border-radius: 12; -fx-background-radius: 12;
+}
+.ai-live-dot { -fx-text-fill: #3fb950; -fx-font-size: 9px; }
+.ai-live-explainer-text { -fx-text-fill: #8b949e; -fx-font-size: 10px; }
+.ai-quick-actions { -fx-padding: 8 0 0 0; }
+.ai-quick-action {
+    -fx-alignment: center-left; -fx-padding: 8 12; -fx-background-color: #161b22;
+    -fx-text-fill: #c9d1d9; -fx-border-color: #30363d; -fx-border-radius: 8;
+    -fx-background-radius: 8; -fx-font-size: 12px; -fx-cursor: hand;
+}
+.ai-quick-action:hover {
+    -fx-background-color: #1c2430; -fx-text-fill: #ffffff; -fx-border-color: #388bfd; -fx-translate-x: 2;
+}
+.ai-composer-shell {
+    -fx-padding: 10 12 8 12; -fx-background-color: linear-gradient(to bottom, #0d1117, #090c10);
+    -fx-border-color: #21262d; -fx-border-width: 1 0 0 0;
+}
+.ai-file-references { -fx-padding: 0 0 8 0; }
+.ai-input-wrap {
+    -fx-background-color: #161b22; -fx-background-radius: 10; -fx-border-color: #30363d;
+    -fx-border-width: 1; -fx-border-radius: 10;
+    -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.22), 10, 0.12, 0, 3);
+}
+.ai-input-wrap:focused-within { -fx-border-color: #388bfd; }
+.ai-composer-input, .ai-composer-input .content {
+    -fx-control-inner-background: transparent; -fx-background-color: transparent;
+    -fx-text-fill: #e6edf3; -fx-font-size: 13px; -fx-border-color: transparent;
+    -fx-background-radius: 10 10 0 0; -fx-padding: 8 10 5 10; -fx-prompt-text-fill: #6e7681;
+}
+.ai-composer-controls { -fx-padding: 7 8 8 8; -fx-border-color: #21262d; -fx-border-width: 1 0 0 0; }
+.ai-composer-icon-btn {
+    -fx-min-width: 30; -fx-background-color: transparent; -fx-text-fill: #8b949e;
+    -fx-border-color: #30363d; -fx-border-radius: 6; -fx-background-radius: 6;
+    -fx-font-size: 15px; -fx-cursor: hand;
+}
+.ai-composer-icon-btn:hover {
+    -fx-background-color: #21262d; -fx-text-fill: #f0f6fc; -fx-border-color: #484f58;
+}
+.ai-composer-meta { -fx-padding: 6 3 0 3; }
+.ai-input-hint { -fx-text-fill: #484f58; -fx-font-size: 9px; }
+.ai-send-btn {
+    -fx-background-color: linear-gradient(to bottom, #238636, #1f6f32); -fx-text-fill: white;
+    -fx-font-size: 12px; -fx-font-weight: bold; -fx-background-radius: 7;
+    -fx-border-color: #2ea043; -fx-border-radius: 7; -fx-cursor: hand;
+    -fx-effect: dropshadow(gaussian, rgba(46,160,67,0.22), 8, 0.18, 0, 2);
+}
+.ai-send-btn:hover { -fx-background-color: #2ea043; }
+.ai-stop-btn, .ai-stop-btn:hover { -fx-background-color: #b62324; -fx-border-color: #f85149; }
+.ai-bubble-user {
+    -fx-background-color: linear-gradient(to bottom right, #1f6feb, #2456a6);
+    -fx-background-radius: 12 12 3 12; -fx-border-color: rgba(88,166,255,0.46);
+    -fx-border-radius: 12 12 3 12; -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.20), 8, 0.10, 0, 2);
+}
+.ai-bubble-assistant {
+    -fx-background-color: #161b22; -fx-background-radius: 3 12 12 12;
+    -fx-border-color: #30363d; -fx-border-radius: 3 12 12 12;
+    -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.18), 8, 0.10, 0, 2);
+}
+.ai-bubble-role-user, .ai-bubble-role-agent {
+    -fx-font-family: "Cascadia Code", "Consolas", monospace; -fx-font-size: 9px; -fx-font-weight: bold;
+}
+.ai-bubble-role-user { -fx-text-fill: rgba(255,255,255,0.70); }
+.ai-bubble-role-agent { -fx-text-fill: #8b949e; }
+.ai-agent-avatar {
+    -fx-min-width: 22; -fx-min-height: 22; -fx-alignment: center;
+    -fx-background-color: linear-gradient(to bottom right, #1f6feb, #8957e5);
+    -fx-background-radius: 6; -fx-text-fill: white; -fx-font-size: 11px; -fx-font-weight: bold;
+}
+.ai-bubble-live-state, .ai-bubble-done-state {
+    -fx-font-family: "Cascadia Code", "Consolas", monospace; -fx-font-size: 8px; -fx-font-weight: bold;
+}
+.ai-bubble-live-state { -fx-text-fill: #58a6ff; }
+.ai-bubble-done-state { -fx-text-fill: #3fb950; }
+.ai-code-block, .ai-shell-block {
+    -fx-background-color: #0d1117; -fx-border-color: #30363d;
+    -fx-border-radius: 8; -fx-background-radius: 8;
+}
+.ai-shell-block { -fx-border-color: rgba(63,185,80,0.40); }

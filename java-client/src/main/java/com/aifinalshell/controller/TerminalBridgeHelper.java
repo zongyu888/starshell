@@ -34,6 +34,11 @@ public class TerminalBridgeHelper {
 
         // 2. 注册事件监听器：检测到事件时在JavaFX线程中处理UI反馈
         TerminalEventBridge.getInstance().watch(sshKey, event -> {
+            // AI 命令的完整输出会直接回传 ToolAgent 继续分析；此时再插入独立“终端错误”气泡
+            // 会重复打断对话。保留 INPUT_REQUIRED 提示，方便用户在密码/确认场景介入。
+            if (terminal.isAiCommandActive() && event.isError()) {
+                return;
+            }
             Platform.runLater(() -> handleEvent(event, controller));
         });
 

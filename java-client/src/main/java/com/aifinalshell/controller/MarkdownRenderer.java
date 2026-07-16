@@ -4,7 +4,6 @@ import javafx.geometry.Pos;
 import javafx.scene.control.Button;
 import javafx.scene.control.Hyperlink;
 import javafx.scene.control.Label;
-import javafx.scene.control.TextArea;
 import javafx.scene.input.Clipboard;
 import javafx.scene.input.ClipboardContent;
 import javafx.scene.layout.HBox;
@@ -19,8 +18,6 @@ import org.slf4j.LoggerFactory;
 
 import java.awt.Desktop;
 import java.net.URI;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.function.Consumer;
@@ -140,46 +137,26 @@ public class MarkdownRenderer {
             return container;
         }
 
-        // 按代码块分割：非代码文本收集到 TextArea（原生支持拖选 + Ctrl+C），代码块保留 TextFlow（语法高亮 + 复制按钮）
-        StringBuilder textPart = new StringBuilder();
-        List<VBox> codeBlocks = new ArrayList<>();
-
+        // 按原始顺序交替渲染普通 Markdown 与代码块。
+        // 旧实现先合并全部普通文本、再追加全部代码块，会打乱“说明→命令→结果”的顺序。
         Matcher codeMatcher = CODE_BLOCK_PATTERN.matcher(markdown);
         int lastEnd = 0;
         while (codeMatcher.find()) {
-            // 代码块前的普通文本 → 拼接到 TextArea 文本
             if (codeMatcher.start() > lastEnd) {
-                textPart.append(markdown.substring(lastEnd, codeMatcher.start()));
+                renderTextSegment(container, markdown.substring(lastEnd, codeMatcher.start()));
             }
-            // 代码块 → TextFlow 渲染（保留语法高亮 + 复制/发送到终端按钮）
             String lang = codeMatcher.group(1);
             String code = codeMatcher.group(2);
-            // 去除尾部多余换行
             if (code.endsWith("\n")) {
                 code = code.substring(0, code.length() - 1);
             }
-            codeBlocks.add(renderCodeBlock(lang, code, sendToTerminalCallback));
+            container.getChildren().add(renderCodeBlock(lang, code, sendToTerminalCallback));
             lastEnd = codeMatcher.end();
         }
 
-        // 剩余文本
         if (lastEnd < markdown.length()) {
-            textPart.append(markdown.substring(lastEnd));
+            renderTextSegment(container, markdown.substring(lastEnd));
         }
-
-        // 创建 TextArea 承载非代码文本（editable=false 原生支持鼠标拖选 + Ctrl+C）
-        if (textPart.length() > 0) {
-            TextArea textArea = new TextArea(textPart.toString().trim());
-            textArea.setEditable(false);
-            textArea.setWrapText(true);
-            textArea.setFocusTraversable(false);
-            textArea.setMaxWidth(ChatBubbleFactory.MAX_BUBBLE_WIDTH - 28);
-            textArea.getStyleClass().add("ai-bubble-text-selectable");
-            container.getChildren().add(textArea);
-        }
-
-        // 代码块（TextFlow + 语法高亮 + 复制按钮）
-        container.getChildren().addAll(codeBlocks);
 
         return container;
     }

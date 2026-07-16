@@ -1,10 +1,10 @@
 package com.aifinalshell.deploy;
 
 import com.aifinalshell.ai.AiServiceClient;
+import com.aifinalshell.controller.TerminalCommandBridge;
 import com.aifinalshell.model.DeployTask;
 import com.aifinalshell.model.ServerConfig;
 import com.aifinalshell.service.DatabaseManager;
-import com.aifinalshell.ssh.SshConnectionManager;
 import com.aifinalshell.util.SecurityUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -30,10 +30,19 @@ public class DeployService {
     }
 
     public DeployTask executeDeploy(ServerConfig server, String script, Consumer<String> outputCallback) {
+        return executeDeploy(server, null, script, outputCallback);
+    }
+
+    /** Execute an AI-generated deployment only through the registered visible terminal. */
+    public DeployTask executeDeploy(ServerConfig server, String connectionKey,
+                                    String script, Consumer<String> outputCallback) {
         DeployTask task = new DeployTask(server.getId(), "部署任务", "AI生成的部署脚本", script);
 
         try {
             DatabaseManager.getInstance().saveDeployTask(task);
+            if (connectionKey == null || connectionKey.isBlank()) {
+                throw new IllegalStateException("部署需要当前可见终端的连接键，已拒绝后台执行");
+            }
             outputCallback.accept("开始执行部署脚本...\n");
 
             // Execute the entire script as one block via SSH bash -c
@@ -44,8 +53,8 @@ public class DeployService {
             // 这样 $? 反映的是脚本的退出码。此前在独立 channel 执行 `echo $?`
             // 拿到的是 echo 自身的退出码（恒为 0），导致部署失败也报成功。
             String wrappedScript = script + "\necho \"EXIT_CODE=$?\"";
-            String result = SshConnectionManager.getInstance().executeCommand(
-                    server.getId(), "bash -c " + wrappedScript.replace("'", "'\\''"));
+            String result = TerminalCommandBridge.getInstance().execute(
+                    connectionKey, "bash -lc " + shellQuote(wrappedScript), 600_000);
 
             outputCallback.accept(result + "\n");
 
@@ -53,11 +62,12 @@ public class DeployService {
             int exitCode = parseExitCode(result);
 
             // 辅助判断：检测关键错误关键字（部分命令退出码为0但实际出错）
-            boolean hasErrorKeywords = result.contains("command not found")
-                    || result.contains("No such file or directory")
-                    || result.contains("Permission denied")
-                    || result.contains("Connection refused")
-                    || (result.contains("error:") && !result.contains("0 errors"));
+            String lowerResult = result.toLowerCase();
+            boolean hasErrorKeywords = lowerResult.contains("command not found")
+                    || lowerResult.contains("no such file or directory")
+                    || lowerResult.contains("permission denied")
+                    || lowerResult.contains("connection refused")
+                    || (lowerResult.contains("error:") && !lowerResult.contains("0 errors"));
 
             // 失败条件：退出码非0，或命中错误关键字
             boolean hasError = (exitCode != 0 && exitCode != -1) || hasErrorKeywords;
@@ -132,7 +142,12 @@ public class DeployService {
     }
 
     public boolean validateDeployment(ServerConfig server, String port) {
+        return validateDeployment(server, null, port);
+    }
+
+    public boolean validateDeployment(ServerConfig server, String connectionKey, String port) {
         try {
+            if (connectionKey == null || connectionKey.isBlank()) return false;
             // 净化端口：仅保留数字，防止命令注入（如 port="; rm -rf /"）
             String safePort = SecurityUtils.sanitizePort(port);
             if (safePort.isEmpty()) {
@@ -140,7 +155,7 @@ public class DeployService {
                 return false;
             }
             String cmd = "netstat -tlnp | grep " + safePort;
-            String result = SshConnectionManager.getInstance().executeCommand(server.getId(), cmd);
+            String result = TerminalCommandBridge.getInstance().execute(connectionKey, cmd, 60_000);
             return result.contains(":" + safePort);
         } catch (Exception e) {
             logger.error("验证部署失败", e);
@@ -149,16 +164,32 @@ public class DeployService {
     }
 
     public void rollback(ServerConfig server, String rollbackScript, Consumer<String> outputCallback) {
+        rollback(server, null, rollbackScript, outputCallback);
+    }
+
+    public void rollback(ServerConfig server, String connectionKey,
+                         String rollbackScript, Consumer<String> outputCallback) {
         outputCallback.accept("开始执行回滚脚本...\n");
         try {
+            if (connectionKey == null || connectionKey.isBlank()) {
+                throw new IllegalStateException("回滚需要当前可见终端的连接键，已拒绝后台执行");
+            }
             // Execute entire rollback script as one block
             outputCallback.accept("$ [Executing rollback script via bash]\n");
-            String result = SshConnectionManager.getInstance().executeCommand(
-                    server.getId(), "bash -c " + rollbackScript.replace("'", "'\\''"));
+            String result = TerminalCommandBridge.getInstance().execute(
+                    connectionKey, "bash -lc " + shellQuote(rollbackScript), 600_000);
             outputCallback.accept(result + "\n");
+            if (result.toLowerCase().startsWith("error:")) {
+                throw new IllegalStateException(result);
+            }
             outputCallback.accept("回滚完成！\n");
         } catch (Exception e) {
             outputCallback.accept("回滚失败: " + e.getMessage() + "\n");
         }
+    }
+
+    private String shellQuote(String value) {
+        String safe = value == null ? "" : value;
+        return "'" + safe.replace("'", "'\"'\"'") + "'";
     }
 }

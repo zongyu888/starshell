@@ -7,32 +7,55 @@ import com.aifinalshell.terminal.PtyResizer;
 import com.aifinalshell.terminal.TerminalBuffer;
 import com.jcraft.jsch.ChannelShell;
 import javafx.application.Platform;
+import javafx.embed.swing.SwingFXUtils;
 import javafx.scene.control.TextArea;
+import javafx.scene.image.Image;
+import javafx.scene.image.PixelReader;
+import javafx.scene.image.PixelWriter;
+import javafx.scene.image.WritableImage;
 import javafx.scene.input.Clipboard;
 import javafx.scene.input.ClipboardContent;
+import javafx.scene.input.ScrollEvent;
+import javafx.scene.layout.Region;
+import javafx.scene.paint.Color;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import javax.imageio.ImageIO;
 import java.io.*;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
+import java.util.Locale;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 
 public class TerminalController {
     private static final Logger logger = LoggerFactory.getLogger(TerminalController.class);
     private TextArea terminalOutput;
+    private final Region terminalBackground;
+    private final Region terminalOverlay;
+    private String cachedBackgroundKey;
+    private Image cachedBackgroundImage;
+    private String cachedBackgroundUrl;
     private ChannelShell shellChannel;
     private InputStream inputStream;
     private OutputStream outputStream;
     private Thread readerThread;
     private volatile boolean running = false;
+    /** 每次挂载/卸载 PTY 都递增，确保旧 reader 永远不会读取或回调到新会话。 */
+    private final AtomicLong connectionGeneration = new AtomicLong();
     private Consumer<String> onStatusChange;
     private Consumer<String> onDataReceived;
     // 终端+AI 联动：命令捕获消费者（仅在 executeCaptured 调用期间临时存在，与 onDataReceived 并存）
     private volatile Consumer<String> captureConsumer;
+    /** 同一可见 PTY 同时只允许一个 AI 命令捕获，防止完成标记和输出串线。 */
+    private final ReentrantLock aiCommandLock = new ReentrantLock();
+    private volatile boolean aiCommandActive = false;
+    private static final int MAX_CAPTURE_CHARS = 256_000;
 
     /**
      * AI 在终端中的操作状态，通过 aiBusyCallback 回调通知 UI 更新指示器。
@@ -58,7 +81,17 @@ public class TerminalController {
     private PtyResizer resizer;
 
     public TerminalController(TextArea terminalOutput) {
+        this(terminalOutput, null, null);
+    }
+
+    public TerminalController(TextArea terminalOutput, Region terminalBackground) {
+        this(terminalOutput, terminalBackground, null);
+    }
+
+    public TerminalController(TextArea terminalOutput, Region terminalBackground, Region terminalOverlay) {
         this.terminalOutput = terminalOutput;
+        this.terminalBackground = terminalBackground;
+        this.terminalOverlay = terminalOverlay;
         terminalOutput.setEditable(false);
         loadSettings();
         setupMouseBehavior();
@@ -93,6 +126,16 @@ public class TerminalController {
                 e.consume();
             }
         });
+
+        // 设置页的滚动速度实际控制终端历史滚动；事件发生时读取配置，Apply 后无需重绑。
+        terminalOutput.addEventFilter(ScrollEvent.SCROLL, e -> {
+            if (e.getDeltaY() == 0) return;
+            int speed = Math.max(1, AppConfig.getInstance().getScrollSpeed());
+            double pixels = Math.max(12.0, Math.abs(e.getDeltaY())) * speed;
+            terminalOutput.setScrollTop(Math.max(0,
+                    terminalOutput.getScrollTop() - Math.copySign(pixels, e.getDeltaY())));
+            e.consume();
+        });
     }
 
     /**
@@ -115,22 +158,12 @@ public class TerminalController {
         // 应用终端视觉样式（字体/颜色/背景图），启动即生效已保存的背景设置
         applyBackground();
 
-        // Task 11.3: 光标样式（cursor_style: block/underscore/bar）与光标闪烁（cursor_blink）
-        // 已在 AppConfig 中持久化存储（见 config.getCursorStyle() / config.isCursorBlink()）。
-        // 滚动缓冲区已通过上方 outputBuffer.setMaxSize(...) 实际生效。
-        // 说明：JavaFX TextArea 的 caret 形状无法通过 inline CSS 可靠控制
-        // （-fx-caret-blink / -fx-shape 等并非跨 JavaFX 版本通用的标准 CSS 属性），
-        // 故此处仅读取并持久化设置；视觉应用留待后续基于 JavaFX caret-shape 支持的更新，
-        // 避免引入不生效或破坏样式的 CSS 属性。
+        // 光标样式作用于 MainController 的命令输入框；滚动缓冲区在上方实际生效。
     }
 
     /**
-     * 应用终端视觉样式：字体、前景/背景色、背景图（CSS 方案）。
-     * 集中构建 inline style 一次性 setStyle，避免与 MainController 重复设置冲突。
-     * 在 loadSettings() 末尾调用（启动即应用）+ SettingsDialog 保存回调调用（实时应用）。
-     *
-     * 背景图方案：-fx-background-image 铺满 + 半透明 -fx-control-inner-background 让图透出。
-     * opacity 语义 = 背景图可见度（越高图越清晰）；深色覆盖层 alpha = 1 - opacity（反转）。
+     * 应用终端视觉样式。背景图绘制到 TextArea 后面的专用 Region；TextArea 的 content 只保留
+     * 半透明颜色遮罩，因此图片不会再被 JavaFX 内部不透明内容层盖住。
      */
     public void applyBackground() {
         if (terminalOutput == null) return;
@@ -145,35 +178,162 @@ public class TerminalController {
                 c.isFontBold() ? "bold" : "normal",
                 c.isFontItalic() ? "italic" : "normal"));
 
-        // 前景/背景色
-        css.append(String.format("-fx-control-inner-background: %s; -fx-text-fill: %s;",
-                c.getTerminalColor("background"), c.getTerminalColor("foreground")));
+        String backgroundColor = c.getTerminalColor("background");
+        String backgroundSize = backgroundSizeCss(c.getBackgroundImageFit());
+        String innerBackground = backgroundColor;
+        String contentImageUrl = null;
+        boolean imageApplied = false;
 
-        // 背景图（启用且路径有效时叠加）
         if (c.isBackgroundImageEnabled()) {
-            String p = c.getBackgroundImagePath();
-            if (p != null && !p.isEmpty()) {
-                // Task 12.1: 使用 File.toURI() 正确编码路径，兼容空格/中文/特殊字符。
-                // 原先 p.replace("\\","/") + "file:" 前缀对含空格或中文的路径会生成非法 CSS URL
-                // （如 file:C:/Users/mouji/my bg.png）。toURI() 输出 file:///C:/Users/mouji/my%20bg.png。
-                File imgFile = new File(p);
-                if (imgFile.exists()) {
-                    String imgUrl = imgFile.toURI().toString();
-                    css.append(String.format(
-                            "-fx-background-image: url('%s'); -fx-background-size: cover; "
-                                    + "-fx-background-repeat: no-repeat; -fx-background-position: center;",
-                            imgUrl));
-                    // Task 12.2: opacity 语义 = 背景图可见度（越高图越清晰）。
-                    // 深色覆盖层 alpha = 1 - opacity（与原逻辑反转）：
-                    //   opacity=1.0 → overlay=0（图全显）；opacity=0.3 → overlay=0.7（图暗，保证文字可读）。
-                    // AppConfig 默认 0.3 → 默认 overlay=0.7（深色，终端可读性优先）。
-                    double overlayAlpha = 1.0 - c.getBackgroundImageOpacity();
-                    css.append(String.format("-fx-control-inner-background: rgba(12,12,12,%.2f);", overlayAlpha));
+            String path = c.getBackgroundImagePath();
+            if (path != null && !path.isBlank()) {
+                File imageFile = new File(path);
+                if (imageFile.isFile()) {
+                    String imageUrl = imageFile.toURI().toASCIIString().replace("'", "%27");
+                    contentImageUrl = imageUrl;
+                    String layerCss = "-fx-background-color: " + backgroundColor + ";"
+                            + "-fx-background-image: url('" + imageUrl + "');"
+                            + "-fx-background-size: " + backgroundSize + ";"
+                            + "-fx-background-repeat: no-repeat;"
+                            + "-fx-background-position: center;";
+                    if (terminalBackground != null) {
+                        terminalBackground.setStyle(layerCss);
+                        terminalBackground.setVisible(true);
+                    } else {
+                        // Compatibility for isolated TerminalController use without the FXML background layer.
+                        css.append(layerCss);
+                    }
+                    double visibility = clamp(c.getBackgroundImageOpacity(), 0.0, 1.0);
+                    if (terminalOverlay != null) {
+                        terminalOverlay.setStyle("-fx-background-color: " + backgroundColor + ";");
+                        terminalOverlay.setOpacity(1.0 - visibility);
+                        terminalOverlay.setVisible(visibility < 1.0);
+                        innerBackground = "transparent";
+                    } else {
+                        innerBackground = toRgba(backgroundColor, 1.0 - visibility);
+                    }
+                    imageApplied = true;
                 }
             }
         }
 
+        if (!imageApplied && terminalBackground != null) {
+            terminalBackground.setStyle("-fx-background-color: " + backgroundColor + ";");
+            terminalBackground.setVisible(true);
+        }
+        if (!imageApplied && terminalOverlay != null) {
+            terminalOverlay.setVisible(false);
+            terminalOverlay.setOpacity(0);
+            innerBackground = "transparent";
+        }
+
+        // 前景、半透明内容层、选区
+        css.append(String.format(
+                "-fx-control-inner-background: %s; -fx-text-fill: %s; "
+                        + "-fx-highlight-fill: %s; -fx-highlight-text-fill: %s;",
+                innerBackground, c.getTerminalColor("foreground"),
+                c.getTerminalColor("selection"), c.getTerminalColor("foreground")));
+
         terminalOutput.setStyle(css.toString());
+        // TextArea skin may be created after this call; force every internal paint layer transparent.
+        final String finalContentImageUrl = contentImageUrl;
+        final String finalBackgroundColor = backgroundColor;
+        final String finalBackgroundSize = backgroundSize;
+        final double finalImageVisibility = clamp(c.getBackgroundImageOpacity(), 0.0, 1.0);
+        Platform.runLater(() -> {
+            for (String selector : new String[]{".scroll-pane", ".viewport"}) {
+                javafx.scene.Node node = terminalOutput.lookup(selector);
+                if (node != null) node.setStyle("-fx-background-color: transparent;");
+            }
+            javafx.scene.Node content = terminalOutput.lookup(".content");
+            if (content instanceof Region contentRegion) {
+                if (finalContentImageUrl != null) {
+                    String blendedUrl = createBlendedImageUrl(
+                            finalContentImageUrl, finalBackgroundColor, finalImageVisibility);
+                    contentRegion.setStyle("-fx-padding: 2;"
+                            + "-fx-background-color: " + finalBackgroundColor + ";"
+                            + "-fx-background-image: url('" + blendedUrl + "');"
+                            + "-fx-background-size: " + finalBackgroundSize + ";"
+                            + "-fx-background-repeat: no-repeat;"
+                            + "-fx-background-position: center;");
+                } else {
+                    contentRegion.setStyle("-fx-padding: 2; -fx-background-color: "
+                            + finalBackgroundColor + "; -fx-background-image: null;");
+                }
+            }
+        });
+    }
+
+    private String createBlendedImageUrl(String imageUrl, String backgroundColor, double visibility) {
+        Color base = Color.web(backgroundColor);
+        int targetWidth = (int) Math.max(640, Math.min(1920, terminalOutput.getWidth()));
+        int targetHeight = (int) Math.max(360, Math.min(1080, terminalOutput.getHeight()));
+        String key = imageUrl + "|" + backgroundColor + "|" + visibility
+                + "|" + targetWidth + "x" + targetHeight;
+        if (!key.equals(cachedBackgroundKey) || cachedBackgroundImage == null) {
+            Image source = new Image(imageUrl, targetWidth, targetHeight, true, true, false);
+            if (source.isError() || source.getPixelReader() == null) {
+                return imageUrl;
+            }
+            cachedBackgroundImage = blendImage(source, base, visibility);
+            cachedBackgroundKey = key;
+            cachedBackgroundUrl = writeBackgroundCache(cachedBackgroundImage, key);
+        }
+        return cachedBackgroundUrl == null ? imageUrl : cachedBackgroundUrl;
+    }
+
+    private String writeBackgroundCache(Image image, String key) {
+        try {
+            File dir = new File(System.getProperty("java.io.tmpdir"), "starshell-background-cache");
+            if (!dir.isDirectory() && !dir.mkdirs()) return null;
+            File output = new File(dir, "terminal-" + Integer.toUnsignedString(key.hashCode(), 16) + ".png");
+            ImageIO.write(SwingFXUtils.fromFXImage(image, null), "png", output);
+            output.deleteOnExit();
+            return output.toURI().toASCIIString().replace("'", "%27");
+        } catch (IOException ex) {
+            logger.warn("Unable to create terminal background cache: {}", ex.getMessage());
+            return null;
+        }
+    }
+
+    static WritableImage blendImage(Image source, Color background, double visibility) {
+        int width = Math.max(1, (int) Math.round(source.getWidth()));
+        int height = Math.max(1, (int) Math.round(source.getHeight()));
+        WritableImage result = new WritableImage(width, height);
+        PixelReader reader = source.getPixelReader();
+        PixelWriter writer = result.getPixelWriter();
+        double imageVisibility = clamp(visibility, 0.0, 1.0);
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                Color pixel = reader.getColor(x, y);
+                double weight = pixel.getOpacity() * imageVisibility;
+                writer.setColor(x, y, Color.color(
+                        pixel.getRed() * weight + background.getRed() * (1.0 - weight),
+                        pixel.getGreen() * weight + background.getGreen() * (1.0 - weight),
+                        pixel.getBlue() * weight + background.getBlue() * (1.0 - weight)));
+            }
+        }
+        return result;
+    }
+
+    static String toRgba(String cssColor, double alpha) {
+        Color color = Color.web(cssColor == null ? "#0c0c0c" : cssColor);
+        return String.format(Locale.ROOT, "rgba(%d,%d,%d,%.3f)",
+                Math.round(color.getRed() * 255),
+                Math.round(color.getGreen() * 255),
+                Math.round(color.getBlue() * 255),
+                clamp(alpha, 0.0, 1.0));
+    }
+
+    /** Map the persisted background-fit mode to JavaFX CSS. */
+    static String backgroundSizeCss(String fitMode) {
+        if ("cover".equalsIgnoreCase(fitMode)) return "cover";
+        if ("stretch".equalsIgnoreCase(fitMode)) return "100% 100%";
+        return "contain";
+    }
+
+    private static double clamp(double value, double min, double max) {
+        return Math.max(min, Math.min(max, value));
     }
 
     public void setServerInfo(String name, String host, String user) {
@@ -183,8 +343,17 @@ public class TerminalController {
     }
 
     public void connect(String connectionKey, ChannelShell channel) {
+        connect(connectionKey, channel, null);
+    }
+
+    /** 挂载 PTY；restoredOutput 非空时恢复该会话历史，而不是清空并显示首次连接横幅。 */
+    public void connect(String connectionKey, ChannelShell channel, String restoredOutput) {
+        // 同一可见终端一次只能挂载一个 PTY；切换会话时静默卸载旧通道。
+        detachForSessionSwitch();
+        final long generation = connectionGeneration.incrementAndGet();
         this.shellChannel = channel;
         this.running = true;
+        this.lastNotifiedStatus = null;
 
         try {
             this.inputStream = channel.getInputStream();
@@ -197,16 +366,22 @@ public class TerminalController {
         // Show connection banner
         Platform.runLater(() -> {
             outputBuffer.clear();
-            appendLine("");
-            appendLine("  \u001B[32m连接主机...\u001B[0m");
-            appendLine("  \u001B[32m连接主机成功\u001B[0m");
-            appendLine("");
-            appendLine("  Server:  " + serverName);
-            appendLine("  Host:    " + serverHost);
-            appendLine("  User:    " + serverUser);
-            appendLine("");
-            appendLine("  ──────────────────────────────────────");
-            appendLine("");
+            if (restoredOutput != null && !restoredOutput.isBlank()) {
+                outputBuffer.append(restoredOutput);
+                if (!restoredOutput.endsWith("\n")) outputBuffer.append("\n");
+                appendLine("  ── 已恢复会话终端 ──");
+            } else {
+                appendLine("");
+                appendLine("  \u001B[32m连接主机...\u001B[0m");
+                appendLine("  \u001B[32m连接主机成功\u001B[0m");
+                appendLine("");
+                appendLine("  Server:  " + serverName);
+                appendLine("  Host:    " + serverHost);
+                appendLine("  User:    " + serverUser);
+                appendLine("");
+                appendLine("  ──────────────────────────────────────");
+                appendLine("");
+            }
             terminalOutput.setText(outputBuffer.getText());
             scrollTerminalToEnd();
         });
@@ -219,7 +394,7 @@ public class TerminalController {
             try {
                 // Small delay to let banner show
                 Thread.sleep(100);
-                while (running) {
+                while (running && connectionGeneration.get() == generation) {
                     if (inputStream.available() > 0) {
                         int len = inputStream.read(buffer);
                         if (len < 0) break;
@@ -246,7 +421,10 @@ public class TerminalController {
                 // 修复项5：无论 reader 因何退出（IOException 断连 / disconnect 中断），
                 // 仅在 finally 统一通知一次 "Disconnected"，避免上层收到两次状态事件
                 // 导致 AI 聊天区重复弹出断连气泡。
-                Platform.runLater(() -> notifyStatus("Disconnected"));
+                if (connectionGeneration.get() == generation) {
+                    running = false;
+                    Platform.runLater(() -> notifyStatus("Disconnected"));
+                }
             }
         });
         readerThread.setDaemon(true);
@@ -415,9 +593,20 @@ public class TerminalController {
     }
 
     public void disconnect() {
+        shutdownTerminal(true, true);
+    }
+
+    /** 会话标签切换时使用：关闭当前 shell，但不显示“已断开”横幅或触发断连气泡。 */
+    public void detachForSessionSwitch() {
+        shutdownTerminal(false, false);
+    }
+
+    private void shutdownTerminal(boolean showBanner, boolean notify) {
+        connectionGeneration.incrementAndGet();
         running = false;
         if (readerThread != null) {
             readerThread.interrupt();
+            readerThread = null;
         }
         // B8: 停止节流定时器（最后一次 flush 在下方 FX 线程中执行，确保线程安全）
         throttler.stop();
@@ -429,18 +618,31 @@ public class TerminalController {
         } catch (IOException e) {
             // ignore
         }
-        Platform.runLater(() -> {
-            throttler.flushNow(); // B8: FX 线程上 flush 残余输出，避免丢失
-            appendLine("");
-            appendLine("  \u001B[33m已断开连接\u001B[0m");
-            terminalOutput.setText(outputBuffer.getText());
-            scrollTerminalToEnd();
-        });
-        notifyStatus("Disconnected");
+        if (shellChannel != null) {
+            try { shellChannel.disconnect(); } catch (Exception ignored) { }
+        }
+        inputStream = null;
+        outputStream = null;
+        shellChannel = null;
+        if (showBanner) {
+            Platform.runLater(() -> {
+                throttler.flushNow();
+                appendLine("");
+                appendLine("  \u001B[33m已断开连接\u001B[0m");
+                terminalOutput.setText(outputBuffer.getText());
+                scrollTerminalToEnd();
+            });
+        }
+        if (notify) notifyStatus("Disconnected");
     }
 
     public boolean isConnected() {
         return running && shellChannel != null && shellChannel.isConnected();
+    }
+
+    /** AI 是否正在独占 PTY 执行一条可见命令；用户仍可用 Ctrl+C 主动中断。 */
+    public boolean isAiCommandActive() {
+        return aiCommandActive;
     }
 
     public void setOnStatusChange(Consumer<String> callback) {
@@ -516,24 +718,57 @@ public class TerminalController {
      * @return 捕获到的命令输出文本
      */
     public String executeCaptured(String command, long timeoutMs) {
-        if (outputStream == null || !running) {
-            return "Error: terminal disconnected. Reconnect and retry, or use execute_shell for non-interactive commands.";
+        try {
+            aiCommandLock.lockInterruptibly();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return "Error: interrupted before visible terminal command started";
         }
-        // 使用时间戳构造唯一哨兵，避免命令输出中偶然包含相同字符串导致提前截断
-        final String sentinel = "_AI" + Long.toHexString(System.nanoTime()) + "_";
+        try {
+            return executeCapturedLocked(command, timeoutMs);
+        } finally {
+            aiCommandLock.unlock();
+        }
+    }
+
+    private String executeCapturedLocked(String command, long timeoutMs) {
+        if (outputStream == null || !running) {
+            return "Error: visible terminal disconnected. Reconnect the server and retry.";
+        }
+        if (command == null || command.isBlank()) {
+            return "Error: visible terminal command is empty";
+        }
+        if (timeoutMs <= 0) {
+            return "Error: visible terminal timeout must be positive";
+        }
+
+        // 使用随机性更高的十六进制 ID。最终标记由 printf 的格式化参数拼出，
+        // 不会原样出现在 PTY 回显的探针命令中，从根本上避免“回显即完成”的竞态。
+        final String commandId = Long.toHexString(System.nanoTime())
+                + Long.toHexString(Double.doubleToLongBits(Math.random()));
         final StringBuilder captured = new StringBuilder();
         final String[] resultHolder = new String[1];
+        final int[] exitCodeHolder = new int[] {-1};
+        final boolean[] captureTruncated = new boolean[] {false};
         final CountDownLatch latch = new CountDownLatch(1);
 
         setCaptureConsumer(chunk -> {
             captured.append(chunk);
-            int idx = captured.indexOf(sentinel);
-            if (idx >= 0) {
-                resultHolder[0] = captured.substring(0, idx);
+            if (captured.length() > MAX_CAPTURE_CHARS) {
+                captured.delete(0, captured.length() - MAX_CAPTURE_CHARS);
+                captureTruncated[0] = true;
+            }
+            java.util.Optional<TerminalCommandProtocol.Completion> completion =
+                    TerminalCommandProtocol.findCompletion(captured, commandId);
+            if (completion.isPresent()) {
+                TerminalCommandProtocol.Completion done = completion.get();
+                resultHolder[0] = captured.substring(0, done.markerStart());
+                exitCodeHolder[0] = done.exitCode();
                 latch.countDown();
             }
         });
 
+        aiCommandActive = true;
         if (aiBusyCallback != null) {
             Platform.runLater(() -> aiBusyCallback.accept(AiBusyState.TYPING, command));
         }
@@ -547,28 +782,35 @@ public class TerminalController {
                 Platform.runLater(() -> aiBusyCallback.accept(AiBusyState.EXECUTING, command));
             }
 
-            // 2. 哨兵命令：无打字效果快速发送，标记命令输出结束。
-            //    用 printf 输出一个极短的标记串，shell 执行后输出哨兵，
-            //    我们在输出流里检测到哨兵就知道主命令已完成。
-            //    这行 printf 会短暂出现在终端上（命令回显+哨兵输出），
-            //    但紧接着 AI 会输入下一条命令（打字机效果覆盖提示符行），
-            //    哨兵行会随终端滚动被推上去，用户几乎不会注意。
-            sendCommand("printf '" + sentinel + "\\n'");
+            // 2. 完成探针：命令回显不包含最终标记；真正执行后才输出标记与上一条命令退出码。
+            sendCommand(TerminalCommandProtocol.buildCompletionProbe(commandId));
 
             boolean done = latch.await(timeoutMs, TimeUnit.MILLISECONDS);
             String raw = done ? resultHolder[0] : captured.toString();
-            String result = stripCaptureArtifacts(raw, sentinel);
+            String result = stripCaptureArtifacts(raw, command);
 
             if (!done) {
-                result += "\n[Command may still be running — captured within "
-                        + timeoutMs + "ms timeout. For interactive commands (top/vim/tail -f) "
-                        + "use execute_shell instead.]";
+                // 不能让超时命令继续占用同一个 PTY，否则下一次 AI 工具调用会与它串线。
+                sendInput("\u0003");
+                return "Error: visible terminal command timed out after " + timeoutMs
+                        + "ms and was interrupted. Partial output:\n" + result.trim();
             }
-            return (result == null || result.trim().isEmpty()) ? "(no output)" : result.trim();
+            String normalized = (result == null || result.trim().isEmpty()) ? "(no output)" : result.trim();
+            if (captureTruncated[0]) {
+                normalized = "[earlier output truncated; showing the latest "
+                        + MAX_CAPTURE_CHARS + " characters]\n" + normalized;
+            }
+            if (exitCodeHolder[0] != 0) {
+                normalized += "\n[exit code: " + exitCodeHolder[0] + "]";
+            }
+            return normalized;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
+            // “停止生成”同时终止当前远端命令，确保终端回到可交互状态。
+            sendInput("\u0003");
             return "Error: interrupted while waiting for command output";
         } finally {
+            aiCommandActive = false;
             setCaptureConsumer(null);
             if (aiBusyCallback != null) {
                 Platform.runLater(() -> aiBusyCallback.accept(AiBusyState.IDLE, null));
@@ -576,14 +818,23 @@ public class TerminalController {
         }
     }
 
-    private String stripCaptureArtifacts(String raw, String sentinel) {
+    private String stripCaptureArtifacts(String raw, String command) {
         if (raw == null) return "";
         StringBuilder out = new StringBuilder();
         String[] lines = raw.split("\r?\n");
+        String firstCommandLine = command == null ? "" : command.strip().split("\\R", 2)[0].trim();
+        boolean commandEchoRemoved = false;
         for (String line : lines) {
             String t = line.trim();
-            if (t.equals(sentinel)) continue;
-            if (t.contains(sentinel) && t.contains("printf")) continue;
+            // 移除内部完成探针的回显；它只用于协议控制，不应进入 AI 上下文。
+            if (t.contains("__STAR_CMD_DONE_%s_%s__") && t.contains("printf")) continue;
+            // PTY 会回显用户输入。仅移除第一次出现的主命令行（含常见 shell 提示符前缀），
+            // 保留后续同名输出，避免把命令本身重复送回模型。
+            if (!commandEchoRemoved && !firstCommandLine.isEmpty()
+                    && (t.equals(firstCommandLine) || t.endsWith(" " + firstCommandLine))) {
+                commandEchoRemoved = true;
+                continue;
+            }
             out.append(line).append("\n");
         }
         return out.toString();
