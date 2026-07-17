@@ -17,6 +17,7 @@ out/
 *.dmg
 *.deb
 *.rpm
+*.zip
 installer-output/
 
 # === 日志文件 ===
