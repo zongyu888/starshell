@@ -94,12 +94,9 @@ public class CustomModelConfigDialog extends Stage {
         modelCombo.setEditable(true);
         modelCombo.setPrefWidth(360);
         modelCombo.setPromptText("如 deepseek-chat（可手动输入或拉取后选择）");
-        // 预填已有自定义模型列表
-        List<String> existingModels = config.getCustomModels(PROVIDER);
-        if (existingModels != null && !existingModels.isEmpty()) {
-            modelCombo.getItems().addAll(existingModels);
-        }
-        // 预选当前活跃模型（若属于 custom）
+        // 不预填历史 models 列表——不同平台的模型名不通用，混在一起会误导用户。
+        // 用户应主动点"拉取列表"从当前 base_url 获取真实可用模型。
+        // 仅预选当前活跃模型，让用户能直接保存或主动更换。
         String activeModel = config.getActiveModel();
         if (activeModel != null && !activeModel.isEmpty()) {
             modelCombo.setValue(activeModel);
@@ -109,6 +106,18 @@ public class CustomModelConfigDialog extends Stage {
         fetchModelsBtn.setStyle("-fx-background-color: #3c3c3c; -fx-text-fill: #d4d4d4; -fx-cursor: hand;");
         fetchModelsBtn.setOnAction(e -> fetchModels());
         modelRow.getChildren().addAll(modelLabel, modelCombo, fetchModelsBtn);
+
+        // base_url 变化时清空模型下拉选项与选中值——不同平台模型不通用，旧选项失效。
+        // 强制用户重新点"拉取列表"获取新平台的可用模型。
+        baseUrlField.textProperty().addListener((obs, oldVal, newVal) -> {
+            String normalizedOld = normalizeUrl(oldVal);
+            String normalizedNew = normalizeUrl(newVal);
+            if (!normalizedOld.equals(normalizedNew)) {
+                modelCombo.getItems().clear();
+                modelCombo.setValue(null);
+                modelCombo.setPromptText("Base URL 已变更，请点\"拉取列表\"获取可用模型");
+            }
+        });
 
         // === 测试区 ===
         HBox testRow = new HBox(10);
@@ -264,6 +273,20 @@ public class CustomModelConfigDialog extends Stage {
 
     // ========== 保存 ==========
 
+    /**
+     * 保存配置——"一站式快速配置"语义：用户在此对话框填入的内容即视为当前要用的全部配置。
+     * <p>
+     * 关键设计：
+     * <ul>
+     *   <li>API Key 走"原子替换"（{@link ApiKeyManager#setSingleKey}），而不是追加。
+     *       原因：custom provider 是单一槽位，用户换平台/换账号时，旧 key 残留会进入
+     *       多 key 轮询池，导致请求被发到错误平台 → 401 invalid_api_key。
+     *       多 key 轮询交给 AiSettingsDialog 的多 key 列表维护。</li>
+     *   <li>Base URL 变化时清空旧 models 列表——不同平台的模型名不通用
+     *       （如阿里云的 qwen-max 与智谱的 glm-4.6 不能混用）。</li>
+     *   <li>始终把当前填写的 model 写入 models 列表，作为新的起点。</li>
+     * </ul>
+     */
     private void save() {
         String baseUrl = baseUrlField.getText().trim();
         String apiKey = getApiKeyText().trim();
@@ -279,27 +302,55 @@ public class CustomModelConfigDialog extends Stage {
         }
 
         AiConfigManager config = AiConfigManager.getInstance();
-        // 保存 Base URL 和 API Key 到 custom provider
-        config.setBaseUrl(PROVIDER, baseUrl);
-        if (!apiKey.isEmpty()) {
-            config.setApiKey(PROVIDER, apiKey);
-        }
 
-        // 维护自定义模型列表：合并已有 + 当前输入，去重
-        List<String> models = new ArrayList<>(config.getCustomModels(PROVIDER));
+        // 检测 Base URL 是否变化（normalized 比较）
+        String oldBaseUrl = config.getBaseUrl(PROVIDER);
+        boolean baseUrlChanged = !normalizeUrl(baseUrl).equals(normalizeUrl(oldBaseUrl));
+
+        // 1. 保存 Base URL
+        config.setBaseUrl(PROVIDER, baseUrl);
+
+        // 2. 替换语义保存 API Key（清空旧 key 列表，只保留新 key）
+        //    即便用户没填 key（本地服务场景），也清空 key 列表避免旧 key 残留
+        //    注意：必须用 replaceApiKey 而不是 setApiKey——后者是追加语义，
+        //    会把新 key 追加到旧 key 后面参与轮询，导致请求被发到错误平台 → 401
+        config.replaceApiKey(PROVIDER, apiKey);
+
+        // 3. 维护 models 列表：以本次拉取到的列表为准，加上当前选中的 model。
+        //    不再合并历史 models——不同平台的模型名不通用，历史列表会污染下拉选项。
+        //    用户没拉取时，modelCombo.getItems() 为空，则只放当前选中的 model。
+        List<String> models = new ArrayList<>(modelCombo.getItems());
         if (!models.contains(model)) {
             models.add(model);
         }
         config.setCustomModels(PROVIDER, models);
 
-        // 设为当前活跃 provider/model，使配置立即生效
+        // 4. 设为当前活跃 provider/model，使配置立即生效
         config.setActiveProvider(PROVIDER);
         config.setActiveModel(model);
         config.saveConfig();
+
+        // 用户提示：换平台时给出明确反馈，引导用户拉取新平台的模型列表
+        if (baseUrlChanged && oldBaseUrl != null && !oldBaseUrl.isEmpty()) {
+            showTestResult(true, "已切换平台，当前模型: " + model + "。建议点\"拉取列表\"获取该平台的可用模型。");
+        }
 
         if (onSaveCallback != null) {
             onSaveCallback.run();
         }
         close();
+    }
+
+    /**
+     * URL 规范化：去尾部斜杠、转小写 host，用于变化检测。
+     * 不修改 path 大小写（部分平台 path 区分大小写）。
+     */
+    private String normalizeUrl(String url) {
+        if (url == null || url.isEmpty()) return "";
+        String u = url.trim();
+        while (u.endsWith("/")) {
+            u = u.substring(0, u.length() - 1);
+        }
+        return u;
     }
 }

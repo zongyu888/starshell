@@ -239,6 +239,31 @@ public class AiConfigManager {
     }
 
     /**
+     * 原子替换语义：清空 provider 原有所有密钥，只保留传入的这一个 key。
+     * <p>
+     * 与 {@link #setApiKey} 的"追加"语义不同，本方法适用于"一站式快速配置"场景
+     * （如 CustomModelConfigDialog），用户期望"我填的就是当前要用的全部"，
+     * 而不是把新 key 追加到旧 key 后面参与轮询。
+     * </p>
+     * <p>
+     * 同时更新 api_keys 数组（轮询源）和 api_key 旧字段（回退源），保证两条读取路径一致。
+     * </p>
+     *
+     * @param provider provider 名称
+     * @param apiKey   明文密钥；为空或 null 则仅清空密钥列表
+     */
+    public void replaceApiKey(String provider, String apiKey) {
+        // 委托 setSingleKey：清空 api_keys 数组，只保留这一个 key（加密存储）
+        ApiKeyManager.getInstance().setSingleKey(provider, apiKey);
+        // 同步更新 api_key 旧字段（加密），保证 getApiKey 回退路径一致
+        String encrypted = (apiKey == null || apiKey.isEmpty())
+                ? "" : SecurityUtils.encrypt(apiKey);
+        ObjectNode p = getProviderNode(provider);
+        p.put("api_key", encrypted);
+        saveConfig();
+    }
+
+    /**
      * 获取指定provider的所有API密钥列表（委托ApiKeyManager）
      */
     public List<ApiKeyManager.ApiKeyEntry> getApiKeys(String provider) {

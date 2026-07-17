@@ -274,6 +274,64 @@ public class ApiKeyManager {
     }
 
     /**
+     * 清空指定 provider 的所有密钥（api_keys 数组）。
+     * 用于"换平台/换账号"场景下重置密钥列表，避免旧 key 残留参与轮询导致 401。
+     * <p>
+     * 注意：仅清空 api_keys 数组，不会动 provider 节点上的 api_key 旧字段
+     * （该字段由调用方在写入新 key 时一并覆盖）。
+     *
+     * @param provider provider 名称
+     */
+    public void clearKeys(String provider) {
+        ArrayNode arr = getApiKeysArray(provider, false);
+        if (arr == null) {
+            return;
+        }
+        if (arr.size() > 0) {
+            arr.removeAll();
+            saveConfig();
+            logger.info("已清空所有API密钥: provider={}", provider);
+        }
+    }
+
+    /**
+     * 原子替换语义：清空 provider 原有所有密钥，然后只保留传入的这一个 key。
+     * <p>
+     * 适用场景：用户在"自定义大模型配置"对话框里保存时，期望"我填的就是当前要用的全部"，
+     * 而不是把新 key 追加到旧 key 后面参与轮询。多 key 轮询应交给专门的 Key 管理界面
+     * （如 AiSettingsDialog 的多 key 列表）维护。
+     * </p>
+     *
+     * @param provider      provider 名称
+     * @param plaintextKey  明文密钥；为空则等价于 clearKeys
+     */
+    public void setSingleKey(String provider, String plaintextKey) {
+        if (plaintextKey == null || plaintextKey.isEmpty()) {
+            clearKeys(provider);
+            return;
+        }
+        ArrayNode arr = getApiKeysArray(provider, true);
+        arr.removeAll();
+
+        ObjectNode entry = objectMapper.createObjectNode();
+        entry.put("key", SecurityUtils.encrypt(plaintextKey));
+        entry.put("label", "Key 1");
+        entry.put("status", "valid");
+        entry.put("failCount", 0);
+        entry.put("lastUsed", 0);
+        arr.add(entry);
+
+        // 重置轮询计数器，避免索引越界
+        AtomicInteger counter = counters.get(provider);
+        if (counter != null) {
+            counter.set(0);
+        }
+
+        saveConfig();
+        logger.info("已替换为单一API密钥: provider={}", provider);
+    }
+
+    /**
      * 获取活跃密钥 - 轮询负载均衡。
      * <p>
      * 使用 AtomicInteger 计数器，取 counter++ % validKeys.size()，
